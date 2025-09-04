@@ -104,6 +104,10 @@ class ZapSuite {
         
         modal.classList.remove('hidden');
         
+        // Show results section immediately so users can see results as they come in
+        document.getElementById('results').classList.remove('hidden');
+        this.displayResults(); // Initialize empty results display
+        
         try {
             // Step 1: Scanning
             this.updateProgressStep('scan', 'active');
@@ -129,41 +133,75 @@ class ZapSuite {
             progressDetails.textContent = `Found ${totalTests} total test runs to execute`;
             
             let completedTests = 0;
+            const maxWorkers = this.config.parallel_workers || 2;
             
-            // Run all tests
+            // Step 2: Indexing and Analyzing
+            this.updateProgressStep('index', 'active');
+            progressText.textContent = `Running tests in parallel...`;
+            progressDetails.textContent = `Using ${maxWorkers} parallel workers`;
+            
+            // Run tests in parallel for each input file
             for (const {repo, inputFiles} of repoInputFiles) {
                 for (const inputFile of inputFiles) {
+                    progressDetails.textContent = `Starting parallel runs for ${inputFile}...`;
+                    
+                    // Create promises for all runs of this input file
+                    const runPromises = [];
                     for (let run = 1; run <= this.config.run_count; run++) {
-                        // Step 2: Indexing (for create_index)
-                        this.updateProgressStep('index', 'active');
-                        progressText.textContent = `Indexing repository: ${repo.repo_path}`;
-                        progressDetails.textContent = `Preparing code context for ${inputFile} (Run ${run}/${this.config.run_count})`;
+                        const promise = this.runSingleTest(repo, inputFile, run)
+                            .then(result => {
+                                this.testResults.push(result);
+                                completedTests++;
+                                
+                                // Update progress
+                                const baseProgress = 20;
+                                const testProgress = (completedTests / totalTests) * 60;
+                                progressFill.style.width = `${baseProgress + testProgress}%`;
+                                
+                                // Update results display immediately after each test completes
+                                this.displayResults();
+                                
+                                // Update progress details with results
+                                if (result.success) {
+                                    const suggestions = this.extractSuggestions(result.output);
+                                    progressDetails.textContent = `✅ ${inputFile} Run ${run} - Found ${suggestions.length} suggestions`;
+                                } else {
+                                    progressDetails.textContent = `❌ ${inputFile} Run ${run} - Error occurred`;
+                                }
+                                
+                                return result;
+                            })
+                            .catch(error => {
+                                completedTests++;
+                                const errorResult = {
+                                    repo: repo.repo_path,
+                                    inputFile,
+                                    runNumber: run,
+                                    success: false,
+                                    output: {},
+                                    error: error.message,
+                                    duration: 0,
+                                    timestamp: new Date().toISOString()
+                                };
+                                this.testResults.push(errorResult);
+                                
+                                // Update progress
+                                const baseProgress = 20;
+                                const testProgress = (completedTests / totalTests) * 60;
+                                progressFill.style.width = `${baseProgress + testProgress}%`;
+                                
+                                this.displayResults();
+                                progressDetails.textContent = `❌ ${inputFile} Run ${run} - Exception: ${error.message}`;
+                                
+                                return errorResult;
+                            });
                         
-                        const baseProgress = 20;
-                        const testProgress = (completedTests / totalTests) * 60;
-                        progressFill.style.width = `${baseProgress + testProgress}%`;
-                        
-                        // Step 3: Analyzing (for wingman execution)
-                        this.updateProgressStep('index', 'completed');
-                        this.updateProgressStep('analyze', 'active');
-                        progressText.textContent = `Analyzing with Wingman AI...`;
-                        progressDetails.textContent = `Processing ${inputFile} (Run ${run}/${this.config.run_count}) - This may take a while`;
-                        
-                        const result = await this.runSingleTest(repo, inputFile, run);
-                        this.testResults.push(result);
-                        
-                        completedTests++;
-                        const finalProgress = 20 + (completedTests / totalTests) * 60;
-                        progressFill.style.width = `${finalProgress}%`;
-                        
-                        // Update progress details with results
-                        if (result.success) {
-                            const suggestions = this.extractSuggestions(result.output);
-                            progressDetails.textContent = `Completed ${inputFile} - Found ${suggestions.length} suggestions`;
-                        } else {
-                            progressDetails.textContent = `Completed ${inputFile} - Error occurred`;
-                        }
+                        runPromises.push(promise);
                     }
+                    
+                    // Wait for all runs of this input file to complete
+                    await Promise.all(runPromises);
+                    progressDetails.textContent = `✅ All runs completed for ${inputFile}`;
                 }
             }
             
@@ -182,19 +220,25 @@ class ZapSuite {
             progressText.textContent = 'All tests completed!';
             progressDetails.textContent = `Successfully processed ${completedTests} test runs`;
             
-            // Another small delay before hiding modal
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // Auto-hide modal after completion
+            setTimeout(() => {
+                if (modal && !modal.classList.contains('hidden')) {
+                    modal.classList.add('hidden');
+                }
+            }, 2000);
             
         } catch (error) {
             console.error('Error during test execution:', error);
             progressText.textContent = 'Error occurred during testing';
             progressDetails.textContent = error.message;
             
-            // Show error for a moment before closing
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Show error for a moment before auto-hiding
+            setTimeout(() => {
+                if (modal && !modal.classList.contains('hidden')) {
+                    modal.classList.add('hidden');
+                }
+            }, 3000);
         } finally {
-            modal.classList.add('hidden');
-            this.displayResults();
             this.isRunning = false;
             this.resetProgressSteps();
         }
@@ -437,26 +481,28 @@ class ZapSuite {
             const hasValidSuggestions = suggestions.length > 0;
             
             return `
-                <div class="suggestion-card mb-6">
-                    <div class="test-run-header">
-                        <div class="test-info">
-                            <span class="test-title">Run ${result.runNumber}</span>
-                            <span class="badge ${result.success ? 'badge-success' : 'badge-failure'}">
-                                ${result.success ? '✓ Success' : '✗ Failed'}
-                            </span>
-                            <span class="text-sm text-gray-500">${result.duration.toFixed(2)}s</span>
-                            <span class="text-sm text-gray-500">${new Date(result.timestamp).toLocaleTimeString()}</span>
-                            ${result.session_id ? `
-                                <button onclick="app.viewSessionLogs('${result.session_id}')" 
-                                        class="text-xs px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200">
-                                    📋 View Logs
-                                </button>
-                            ` : ''}
+                <details class="suggestion-card mb-6 border border-gray-200 rounded-lg">
+                    <summary class="test-run-header cursor-pointer p-4 hover:bg-gray-50">
+                        <div class="flex items-center justify-between">
+                            <div class="test-info flex items-center gap-3">
+                                <span class="test-title font-medium">Run ${result.runNumber}</span>
+                                <span class="badge ${result.success ? 'badge-success' : 'badge-failure'}">
+                                    ${result.success ? '✓ Success' : '✗ Failed'}
+                                </span>
+                                <span class="text-sm text-gray-500">${result.duration.toFixed(2)}s</span>
+                                <span class="text-sm text-gray-500">${new Date(result.timestamp).toLocaleTimeString()}</span>
+                                ${result.session_id ? `
+                                    <button onclick="event.stopPropagation(); app.viewSessionLogs('${result.session_id}')" 
+                                            class="text-xs px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200">
+                                        📋 View Logs
+                                    </button>
+                                ` : ''}
+                            </div>
+                            ${hasValidSuggestions ? `<span class="badge badge-accurate">${suggestions.length} suggestions</span>` : ''}
                         </div>
-                        ${hasValidSuggestions ? `<span class="badge badge-accurate">${suggestions.length} suggestions</span>` : ''}
-                    </div>
+                    </summary>
                     
-                    <div class="suggestion-content">
+                    <div class="suggestion-content p-4 border-t border-gray-200">
                         ${result.error ? `
                             <div class="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
                                 <p class="text-red-800 font-medium">Error:</p>
@@ -525,7 +571,7 @@ class ZapSuite {
                             </div>
                         </details>
                     </div>
-                </div>
+                </details>
             `;
         }).join('');
     }
@@ -1081,6 +1127,39 @@ class ZapSuite {
             button.textContent = `📋 View Live Logs (${this.sessionLogs.size})`;
             button.onclick = () => this.showLogViewer();
             resultsHeader.appendChild(button);
+        }
+    }
+
+    // Modal minimize/maximize functionality
+    minimizeProgressModal() {
+        const modalOverlay = document.getElementById('loadingModal');
+        const modalContent = modalOverlay.querySelector('.progress-modal-content');
+        const minimizeBtn = document.getElementById('minimizeModalBtn');
+        const maximizeBtn = document.getElementById('maximizeModalBtn');
+        
+        if (modalOverlay && modalContent) {
+            modalOverlay.classList.add('minimized');
+            modalContent.classList.add('minimized');
+            
+            // Switch button visibility
+            minimizeBtn.classList.add('hidden');
+            maximizeBtn.classList.remove('hidden');
+        }
+    }
+    
+    maximizeProgressModal() {
+        const modalOverlay = document.getElementById('loadingModal');
+        const modalContent = modalOverlay.querySelector('.progress-modal-content');
+        const minimizeBtn = document.getElementById('minimizeModalBtn');
+        const maximizeBtn = document.getElementById('maximizeModalBtn');
+        
+        if (modalOverlay && modalContent) {
+            modalOverlay.classList.remove('minimized');
+            modalContent.classList.remove('minimized');
+            
+            // Switch button visibility
+            maximizeBtn.classList.add('hidden');
+            minimizeBtn.classList.remove('hidden');
         }
     }
 }

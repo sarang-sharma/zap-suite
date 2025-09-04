@@ -72,10 +72,20 @@
     <div id="loadingModal" class="modal-overlay hidden">
         <div class="progress-modal-content">
             <div class="p-6 border-b border-gray-200">
-                <h3 class="text-lg font-semibold text-gray-900 mb-4">
-                    <span class="spinner"></span>
-                    Running Tests...
-                </h3>
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-900">
+                        <span class="spinner"></span>
+                        Running Tests...
+                    </h3>
+                    <div class="flex items-center gap-2">
+                        <button id="minimizeModalBtn" class="text-gray-500 hover:text-gray-700 px-2 py-1 rounded" onclick="app.minimizeProgressModal()" title="Minimize">
+                            &#8722;
+                        </button>
+                        <button id="maximizeModalBtn" class="text-gray-500 hover:text-gray-700 px-2 py-1 rounded hidden" onclick="app.maximizeProgressModal()" title="Maximize">
+                            &#9723;
+                        </button>
+                    </div>
+                </div>
                 
                 <div class="progress-container">
                     <div class="progress-bar">
@@ -103,7 +113,7 @@
             </div>
             
             <!-- Live Logs Section -->
-            <div class="px-6 py-4">
+            <div class="px-6 py-4 progress-logs-section">
                 <div class="flex items-center justify-between mb-3">
                     <h4 class="text-sm font-semibold text-gray-700">Live Logs</h4>
                     <button id="clearLogsBtn" class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200" onclick="app.clearProgressLogs()">

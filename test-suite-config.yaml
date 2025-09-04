@@ -1,17 +1,12 @@
 # Wingman Test Suite Configuration
-wingman_binary_path: /Users/sarangsharma/code/bito-wingman/build/bitowingman
-wingman_config_path: /Users/sarangsharma/.bitowingman/config.json
-perplexity_key: YOUR_PERPLEXITY_API_KEY_HERE
-run_count: 1
-parallel_workers: 3
+wingman_binary_path: /path/to/your/bitowingman/binary
+wingman_config_path: /path/to/your/.bitowingman/config.json
+perplexity_key: your_perplexity_api_key_here
+run_count: 2
+parallel_workers: 2
 
 repos:
-  - repo_path: /Users/sarangsharma/code/faultline
-    branch: chunking-test-issue-2
-    inputs_path: /Users/sarangsharma/code/inputs
-    output_path: /Users/sarangsharma/code/outputs
-
-  - repo_path: /Users/sarangsharma/code/mlflow
-    branch: align_eval_assessment
-    inputs_path: /Users/sarangsharma/code/inputs-2
-    output_path: /Users/sarangsharma/code/outputs-2
+  - repo_path: /path/to/your/repo
+    branch: your-branch-name
+    inputs_path: /path/to/your/inputs
+    output_path: /path/to/your/outputs

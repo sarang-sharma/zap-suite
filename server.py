@@ -23,7 +23,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Global configuration
-CONFIG_FILE = 'test-suite-config.yaml'
+CONFIG_FILE = 'test-suite-config-local.yaml'
 config = None
 
 # Global log streaming system
@@ -244,11 +244,29 @@ def extract_tool_analytics(raw_output):
         return {}
 
 def checkout_branch(repo_path, branch_name):
-    """Checkout the specified branch with error handling"""
+    """Checkout the specified branch with error handling and parallel execution safety"""
+    import time
+    import random
+    
     try:
         print(f"Checking out branch '{branch_name}' in {repo_path}")
         
-        # First, check if the branch exists
+        # First, check if we're already on the correct branch
+        result = subprocess.run(
+            ['git', 'branch', '--show-current'],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if result.returncode == 0:
+            current_branch = result.stdout.strip()
+            if current_branch == branch_name:
+                print(f"Already on branch '{branch_name}', skipping checkout")
+                return True, f"Already on branch '{branch_name}'"
+        
+        # Check if the branch exists
         result = subprocess.run(
             ['git', 'branch', '-a'],
             cwd=repo_path,
@@ -268,23 +286,47 @@ def checkout_branch(repo_path, branch_name):
         if not local_branch_exists and not remote_branch_exists:
             return False, f"Branch '{branch_name}' does not exist in repository"
         
-        # Try to checkout the branch
-        result = subprocess.run(
-            ['git', 'checkout', branch_name],
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if result.returncode == 0:
-            print(f"Successfully checked out branch '{branch_name}'")
-            return True, f"Successfully checked out branch '{branch_name}'"
-        else:
-            return False, f"Failed to checkout branch '{branch_name}': {result.stderr}"
+        # Retry logic for git checkout with exponential backoff
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Add random delay to reduce collision probability
+                if attempt > 0:
+                    delay = (2 ** attempt) + random.uniform(0.1, 0.5)
+                    print(f"Git checkout attempt {attempt + 1}/{max_retries}, waiting {delay:.1f}s...")
+                    time.sleep(delay)
+                
+                # Try to checkout the branch
+                result = subprocess.run(
+                    ['git', 'checkout', branch_name],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                
+                if result.returncode == 0:
+                    print(f"Successfully checked out branch '{branch_name}'")
+                    return True, f"Successfully checked out branch '{branch_name}'"
+                else:
+                    error_msg = result.stderr.strip()
+                    
+                    # Check if it's a lock file error
+                    if "index.lock" in error_msg and attempt < max_retries - 1:
+                        print(f"Git lock detected, retrying... ({error_msg})")
+                        continue
+                    else:
+                        return False, f"Failed to checkout branch '{branch_name}': {error_msg}"
+                        
+            except subprocess.TimeoutExpired:
+                if attempt < max_retries - 1:
+                    print(f"Git checkout timeout, retrying...")
+                    continue
+                else:
+                    return False, f"Timeout while checking out branch '{branch_name}'"
             
-    except subprocess.TimeoutExpired:
-        return False, f"Timeout while checking out branch '{branch_name}'"
+        return False, f"Failed to checkout branch '{branch_name}' after {max_retries} attempts"
+            
     except Exception as e:
         return False, f"Error checking out branch '{branch_name}': {str(e)}"
 

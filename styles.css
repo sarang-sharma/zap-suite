@@ -424,6 +424,57 @@ details > div {
     margin: 1rem;
     display: flex;
     flex-direction: column;
+    transition: all 0.3s ease;
+}
+
+/* Minimized Modal Styles */
+.modal-overlay.minimized {
+    background-color: transparent;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 1rem;
+    pointer-events: none; /* Allow clicks to pass through the transparent overlay */
+}
+
+.progress-modal-content.minimized {
+    min-width: 300px;
+    max-width: 350px;
+    max-height: 120px;
+    min-height: auto;
+    margin: 0;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    border: 1px solid #e5e7eb;
+    pointer-events: auto; /* Re-enable clicks on the actual modal content */
+}
+
+.progress-modal-content.minimized .progress-container,
+.progress-modal-content.minimized .progress-logs-section {
+    display: none;
+}
+
+.progress-modal-content.minimized .border-b {
+    border-bottom: none;
+}
+
+/* Minimize/Maximize button styles */
+.modal-controls button {
+    background-color: transparent;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.25rem;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.modal-controls button:hover {
+    background-color: #f3f4f6;
+    border-color: #d1d5db;
 }
 
 .progress-logs-container {
