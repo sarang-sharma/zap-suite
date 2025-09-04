@@ -7,5 +7,6 @@ parallel_workers: 3
 
 repos:
   - repo_path: /Users/sarangsharma/code/faultline
+    branch: chunking-test-issue-2
     inputs_path: /Users/sarangsharma/code/inputs
     output_path: /Users/sarangsharma/code/outputs

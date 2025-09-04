@@ -55,8 +55,13 @@ def extract_json_from_output(raw_output):
         if json_match:
             return json_match.group(1).strip()
         
-        # Fallback: look for JSON content without backticks
+        # Fallback: look for JSON content without backticks (try both formats)
         json_match = re.search(r'\{[\s\S]*"analysis_results"[\s\S]*\}', cleaned)
+        if json_match:
+            return json_match.group(0).strip()
+        
+        # Try the new evaluation_results format
+        json_match = re.search(r'\{[\s\S]*"evaluation_results"[\s\S]*\}', cleaned)
         if json_match:
             return json_match.group(0).strip()
             
@@ -99,6 +104,102 @@ def extract_tool_analytics(raw_output):
         print(f"Error extracting tool analytics: {e}")
         return {}
 
+def checkout_branch(repo_path, branch_name):
+    """Checkout the specified branch with error handling"""
+    try:
+        print(f"Checking out branch '{branch_name}' in {repo_path}")
+        
+        # First, check if the branch exists
+        result = subprocess.run(
+            ['git', 'branch', '-a'],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            return False, f"Failed to list branches: {result.stderr}"
+        
+        # Check if branch exists (locally or remotely)
+        branches_output = result.stdout
+        local_branch_exists = f"  {branch_name}" in branches_output or f"* {branch_name}" in branches_output
+        remote_branch_exists = f"remotes/origin/{branch_name}" in branches_output
+        
+        if not local_branch_exists and not remote_branch_exists:
+            return False, f"Branch '{branch_name}' does not exist in repository"
+        
+        # Try to checkout the branch
+        result = subprocess.run(
+            ['git', 'checkout', branch_name],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode == 0:
+            print(f"Successfully checked out branch '{branch_name}'")
+            return True, f"Successfully checked out branch '{branch_name}'"
+        else:
+            return False, f"Failed to checkout branch '{branch_name}': {result.stderr}"
+            
+    except subprocess.TimeoutExpired:
+        return False, f"Timeout while checking out branch '{branch_name}'"
+    except Exception as e:
+        return False, f"Error checking out branch '{branch_name}': {str(e)}"
+
+def save_raw_output(output_path, repo_name, input_file, run_number, stdout, stderr, success):
+    """Save raw output and error to files in the output directory"""
+    try:
+        # Create output directory if it doesn't exist
+        output_dir = Path(output_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        repo_clean = Path(repo_name).name  # Get just the repo name, not full path
+        input_clean = Path(input_file).stem  # Remove extension
+        
+        base_filename = f"{repo_clean}_{input_clean}_run{run_number}_{timestamp}"
+        
+        # Save stdout
+        stdout_file = output_dir / f"{base_filename}_stdout.txt"
+        with open(stdout_file, 'w', encoding='utf-8') as f:
+            f.write(f"# Raw Output - {datetime.now().isoformat()}\n")
+            f.write(f"# Repository: {repo_name}\n")
+            f.write(f"# Input File: {input_file}\n")
+            f.write(f"# Run Number: {run_number}\n")
+            f.write(f"# Success: {success}\n")
+            f.write(f"# {'='*50}\n\n")
+            f.write(stdout or "No stdout output")
+        
+        # Save stderr if exists
+        stderr_file = None
+        if stderr:
+            stderr_file = output_dir / f"{base_filename}_stderr.txt"
+            with open(stderr_file, 'w', encoding='utf-8') as f:
+                f.write(f"# Error Output - {datetime.now().isoformat()}\n")
+                f.write(f"# Repository: {repo_name}\n")
+                f.write(f"# Input File: {input_file}\n")
+                f.write(f"# Run Number: {run_number}\n")
+                f.write(f"# Success: {success}\n")
+                f.write(f"# {'='*50}\n\n")
+                f.write(stderr)
+        
+        print(f"Raw output saved to: {stdout_file}")
+        if stderr_file:
+            print(f"Error output saved to: {stderr_file}")
+            
+        return {
+            "stdout_file": str(stdout_file),
+            "stderr_file": str(stderr_file) if stderr_file else None
+        }
+        
+    except Exception as e:
+        print(f"Warning: Failed to save raw output: {e}")
+        return None
+
 def get_input_files(inputs_path):
     """Get all .txt files from inputs directory"""
     try:
@@ -108,11 +209,32 @@ def get_input_files(inputs_path):
         print(f"Error getting input files: {e}")
         return []
 
-def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_number):
-    """Run a single wingman test with timing"""
+def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_number, branch_name=None):
+    """Run a single wingman test with timing and branch checkout"""
     start_time = time.time()
+    stdout_output = ""
+    stderr_output = ""
     
     try:
+        # Checkout branch if specified
+        if branch_name:
+            branch_success, branch_message = checkout_branch(repo_path, branch_name)
+            if not branch_success:
+                error_msg = f"Branch checkout failed: {branch_message}"
+                # Still save raw output even for branch failures
+                save_raw_output(output_path, repo_path, input_file_path, run_number, "", error_msg, False)
+                return {
+                    "success": False,
+                    "output": {},
+                    "raw_output": "",
+                    "raw_error": error_msg,
+                    "tool_analytics": {},
+                    "error": error_msg,
+                    "duration": time.time() - start_time,
+                    "timestamp": datetime.now().isoformat(),
+                    "branch_checkout": {"success": False, "message": branch_message}
+                }
+        
         # Generate unique session ID for this entire test run
         session_id = str(uuid.uuid4())
         
@@ -193,35 +315,41 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
             timeout=300
         )
         
+        stdout_output = result.stdout or ""
+        stderr_output = result.stderr or ""
+        
         # Debug: Log the result
         print(f"Return code: {result.returncode}")
-        print(f"STDOUT: {result.stdout[:500]}...")
-        print(f"STDERR: {result.stderr[:500]}...")
+        print(f"STDOUT: {stdout_output[:500]}...")
+        print(f"STDERR: {stderr_output[:500]}...")
         
         end_time = time.time()
         duration = end_time - start_time
         
+        # Always save raw output to files
+        saved_files = save_raw_output(output_path, repo_path, input_file_path, run_number, stdout_output, stderr_output, result.returncode == 0)
+        
         # Parse JSON output - extract content from backticks
         try:
             # Extract JSON from backticks
-            clean_json = extract_json_from_output(result.stdout)
+            clean_json = extract_json_from_output(stdout_output)
             if clean_json:
                 output = json.loads(clean_json)
             else:
-                output = {"raw_output": result.stdout}
+                output = {"raw_output": stdout_output}
         except Exception as e:
-            output = {"raw_output": result.stdout, "parse_error": str(e)}
+            output = {"raw_output": stdout_output, "parse_error": str(e)}
         
         # Extract tool analytics from raw output
-        tool_analytics = extract_tool_analytics(result.stdout)
+        tool_analytics = extract_tool_analytics(stdout_output)
         
-        return {
+        response = {
             "success": result.returncode == 0,
             "output": output,
-            "raw_output": result.stdout,
-            "raw_error": result.stderr,
+            "raw_output": stdout_output,
+            "raw_error": stderr_output,
             "tool_analytics": tool_analytics,
-            "error": result.stderr if result.returncode != 0 else None,
+            "error": stderr_output if result.returncode != 0 else None,
             "duration": duration,
             "timestamp": datetime.now().isoformat(),
             "session_id": session_id,
@@ -232,19 +360,41 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
             }
         }
         
+        # Add branch checkout info if applicable
+        if branch_name:
+            response["branch_checkout"] = {"success": True, "message": f"Successfully checked out branch '{branch_name}'"}
+        
+        # Add saved file info
+        if saved_files:
+            response["saved_files"] = saved_files
+        
+        return response
+        
     except subprocess.TimeoutExpired:
+        # Save raw output even for timeouts
+        error_msg = "Test timed out after 5 minutes"
+        save_raw_output(output_path, repo_path, input_file_path, run_number, stdout_output, error_msg, False)
         return {
             "success": False,
             "output": {},
-            "error": "Test timed out after 5 minutes",
+            "raw_output": stdout_output,
+            "raw_error": error_msg,
+            "tool_analytics": {},
+            "error": error_msg,
             "duration": 300,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
+        # Save raw output even for exceptions
+        error_msg = str(e)
+        save_raw_output(output_path, repo_path, input_file_path, run_number, stdout_output, error_msg, False)
         return {
             "success": False,
             "output": {},
-            "error": str(e),
+            "raw_output": stdout_output,
+            "raw_error": error_msg,
+            "tool_analytics": {},
+            "error": error_msg,
             "duration": time.time() - start_time,
             "timestamp": datetime.now().isoformat()
         }
@@ -294,20 +444,28 @@ def run_test():
     if not all(field in data for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
     
+    # Find branch name for the repository from config
+    branch_name = None
+    for repo in config.get('repos', []):
+        if repo['repo_path'] == data['repo_path']:
+            branch_name = repo.get('branch')
+            break
+    
     result = run_wingman_test(
         data['repo_path'],
         data['input_file'],
         data['inputs_path'],
         data['output_path'],
-        data['run_number']
+        data['run_number'],
+        branch_name
     )
     
     return jsonify(result)
 
 def run_test_parallel(args):
     """Wrapper function for parallel execution"""
-    repo_path, input_file, inputs_path, output_path, run_number = args
-    return run_wingman_test(repo_path, input_file, inputs_path, output_path, run_number)
+    repo_path, input_file, inputs_path, output_path, run_number, branch_name = args
+    return run_wingman_test(repo_path, input_file, inputs_path, output_path, run_number, branch_name)
 
 @app.route('/api/run-all', methods=['POST'])
 def run_all_tests():
@@ -325,6 +483,7 @@ def run_all_tests():
         
         # Prepare test tasks for this repository only
         repo_test_tasks = []
+        branch_name = repo.get('branch')  # Get branch name for this repo
         for input_file in input_files:
             for run in range(1, config['run_count'] + 1):
                 repo_test_tasks.append((
@@ -332,7 +491,8 @@ def run_all_tests():
                     input_file,
                     inputs_path,
                     repo['output_path'],
-                    run
+                    run,
+                    branch_name
                 ))
         
         # Execute tests for this repository in parallel

@@ -69,6 +69,7 @@ class ZapSuite {
                         ${this.config.repos.map(repo => `
                             <div class="bg-gray-50 rounded p-2">
                                 <p class="font-medium">${repo.repo_path}</p>
+                                <p class="text-xs text-gray-600">Branch: ${repo.branch || 'default'}</p>
                                 <p class="text-xs text-gray-600">Inputs: ${repo.inputs_path}</p>
                                 <p class="text-xs text-gray-600">Outputs: ${repo.output_path}</p>
                             </div>
@@ -255,6 +256,8 @@ class ZapSuite {
                 commands: result.commands || null,
                 session_id: result.session_id || null,
                 error: result.error || null,
+                branch_checkout: result.branch_checkout || null,
+                saved_files: result.saved_files || null,
                 duration: (endTime - startTime) / 1000, // Convert to seconds
                 timestamp: new Date().toISOString()
             };
@@ -370,9 +373,28 @@ class ZapSuite {
                             </details>
                         ` : ''}
                         
-                        <details class="mt-4">
+                        <details class="mt-4" open>
                             <summary class="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900">Raw Output & Logs</summary>
                             <div class="mt-2 space-y-2">
+                                ${result.branch_checkout ? `
+                                    <div>
+                                        <p class="text-xs font-medium text-gray-600 mb-1">Branch Checkout:</p>
+                                        <div class="code-block text-xs ${result.branch_checkout.success ? 'text-green-600' : 'text-red-600'}">
+                                            ${result.branch_checkout.success ? '✓' : '✗'} ${result.branch_checkout.message}
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                
+                                ${result.saved_files ? `
+                                    <div>
+                                        <p class="text-xs font-medium text-gray-600 mb-1">Saved Files:</p>
+                                        <div class="code-block text-xs">
+                                            ${result.saved_files.stdout_file ? `Stdout: ${result.saved_files.stdout_file}<br>` : ''}
+                                            ${result.saved_files.stderr_file ? `Stderr: ${result.saved_files.stderr_file}` : ''}
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                
                                 ${result.commands ? `
                                     <div>
                                         <p class="text-xs font-medium text-gray-600 mb-1">Commands:</p>
@@ -385,12 +407,10 @@ class ZapSuite {
                                     </div>
                                 ` : ''}
                                 
-                                ${result.raw_output ? `
-                                    <div>
-                                        <p class="text-xs font-medium text-gray-600 mb-1">Standard Output:</p>
-                                        <pre class="code-block text-xs">${result.raw_output}</pre>
-                                    </div>
-                                ` : ''}
+                                <div>
+                                    <p class="text-xs font-medium text-gray-600 mb-1">Standard Output:</p>
+                                    <pre class="code-block text-xs">${result.raw_output || 'No stdout output'}</pre>
+                                </div>
                                 
                                 ${result.raw_error ? `
                                     <div>
@@ -408,8 +428,18 @@ class ZapSuite {
 
     extractSuggestions(output) {
         if (!output || typeof output !== 'object') return [];
-        if (!output.analysis_results || !Array.isArray(output.analysis_results)) return [];
-        return output.analysis_results;
+        
+        // Handle new evaluation_results format
+        if (output.evaluation_results && Array.isArray(output.evaluation_results)) {
+            return output.evaluation_results;
+        }
+        
+        // Handle old analysis_results format
+        if (output.analysis_results && Array.isArray(output.analysis_results)) {
+            return output.analysis_results;
+        }
+        
+        return [];
     }
 
     detectJsonParsingIssues(result) {
@@ -422,16 +452,20 @@ class ZapSuite {
             };
         }
 
-        // Check if output looks like it should have analysis_results but doesn't
+        // Check if output looks like it should have results but doesn't (handle both formats)
         if (result.output && typeof result.output === 'object' && result.success) {
-            if (!result.output.analysis_results) {
+            const hasAnalysisResults = result.output.analysis_results && Array.isArray(result.output.analysis_results);
+            const hasEvaluationResults = result.output.evaluation_results && Array.isArray(result.output.evaluation_results);
+            
+            if (!hasAnalysisResults && !hasEvaluationResults) {
                 return {
                     hasIssue: true,
-                    type: 'missing_analysis_results',
-                    message: 'JSON output missing analysis_results field'
+                    type: 'missing_results',
+                    message: 'JSON output missing analysis_results or evaluation_results field'
                 };
             }
 
+            // Check for invalid array structure
             if (result.output.analysis_results && !Array.isArray(result.output.analysis_results)) {
                 return {
                     hasIssue: true,
@@ -439,12 +473,29 @@ class ZapSuite {
                     message: 'analysis_results field is not an array'
                 };
             }
-
-            if (Array.isArray(result.output.analysis_results) && result.output.analysis_results.length === 0) {
+            
+            if (result.output.evaluation_results && !Array.isArray(result.output.evaluation_results)) {
                 return {
                     hasIssue: true,
-                    type: 'empty_analysis_results',
+                    type: 'invalid_evaluation_results',
+                    message: 'evaluation_results field is not an array'
+                };
+            }
+
+            // Check for empty arrays
+            if (hasAnalysisResults && result.output.analysis_results.length === 0) {
+                return {
+                    hasIssue: true,
+                    type: 'empty_results',
                     message: 'analysis_results array is empty'
+                };
+            }
+            
+            if (hasEvaluationResults && result.output.evaluation_results.length === 0) {
+                return {
+                    hasIssue: true,
+                    type: 'empty_results',
+                    message: 'evaluation_results array is empty'
                 };
             }
         }
@@ -471,9 +522,20 @@ class ZapSuite {
     }
 
     renderSingleSuggestion(suggestion, index) {
-        const isAccurate = suggestion.analysis?.is_accurate ?? null;
-        const accuracyBadge = isAccurate === true ? 'badge-accurate' : isAccurate === false ? 'badge-inaccurate' : 'badge-unknown';
-        const accuracyText = isAccurate === true ? '✓ Accurate' : isAccurate === false ? '✗ Inaccurate' : '? Unknown';
+        // Handle both old and new formats
+        let isAccurate, accuracyBadge, accuracyText;
+        
+        if (suggestion.should_keep_suggestion !== undefined) {
+            // New format - use should_keep_suggestion
+            isAccurate = suggestion.should_keep_suggestion;
+            accuracyBadge = isAccurate === true ? 'badge-accurate' : isAccurate === false ? 'badge-inaccurate' : 'badge-unknown';
+            accuracyText = isAccurate === true ? '✓ Keep' : isAccurate === false ? '✗ Discard' : '? Unknown';
+        } else {
+            // Old format - use analysis.is_accurate
+            isAccurate = suggestion.analysis?.is_accurate ?? null;
+            accuracyBadge = isAccurate === true ? 'badge-accurate' : isAccurate === false ? 'badge-inaccurate' : 'badge-unknown';
+            accuracyText = isAccurate === true ? '✓ Accurate' : isAccurate === false ? '✗ Inaccurate' : '? Unknown';
+        }
         
         return `
             <div class="border border-gray-200 rounded-lg overflow-hidden">
@@ -494,6 +556,13 @@ class ZapSuite {
                         <p class="text-gray-900">${suggestion.pr_comment || 'No comment provided'}</p>
                     </div>
                     
+                    ${suggestion.summary ? `
+                        <div class="summary-section mb-4">
+                            <p class="font-medium text-gray-700 mb-1">Summary:</p>
+                            <p class="text-gray-800 text-sm">${suggestion.summary}</p>
+                        </div>
+                    ` : ''}
+                    
                     ${suggestion.analysis ? `
                         <div class="analysis-grid mb-4">
                             <div class="analysis-item">
@@ -507,6 +576,14 @@ class ZapSuite {
                             </div>
                             <div class="analysis-item">
                                 <strong>Same as Diff:</strong> ${suggestion.analysis.is_code_fix_patch_same_as_diff || 'Unknown'}
+                            </div>
+                        </div>
+                    ` : suggestion.should_keep_suggestion !== undefined ? `
+                        <div class="evaluation-section mb-4">
+                            <div class="bg-gray-50 rounded p-3">
+                                <div class="analysis-item">
+                                    <strong>Keep Suggestion:</strong> ${suggestion.should_keep_suggestion ? 'Yes' : 'No'}
+                                </div>
                             </div>
                         </div>
                     ` : ''}
