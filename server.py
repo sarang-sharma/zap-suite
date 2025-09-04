@@ -47,6 +47,7 @@ def extract_json_from_output(raw_output):
         cleaned = re.sub(r'\x1b\[[0-9;]*[mK]', '', raw_output)  # Remove ANSI escape sequences
         cleaned = re.sub(r'[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]', '', cleaned)  # Remove spinner characters
         cleaned = re.sub(r'Thinking\.\.\.', '', cleaned)  # Remove "Thinking..."
+        cleaned = re.sub(r'Tool \w+ execution time: \d+ms', '', cleaned)  # Remove tool execution times
         cleaned = re.sub(r'\n+', '\n', cleaned)  # Normalize newlines
         
         # Look for JSON content in backticks
@@ -63,6 +64,40 @@ def extract_json_from_output(raw_output):
     except Exception as e:
         print(f"Error extracting JSON: {e}")
         return None
+
+def extract_tool_analytics(raw_output):
+    """Extract tool execution analytics from raw output"""
+    if not raw_output:
+        return {}
+    
+    try:
+        import re
+        analytics = {
+            "tools_executed": [],
+            "total_execution_time": 0,
+            "tool_count": 0
+        }
+        
+        # Find all tool execution patterns
+        tool_pattern = r'Tool (\w+) execution time: (\d+)ms'
+        matches = re.findall(tool_pattern, raw_output)
+        
+        for tool_name, execution_time in matches:
+            execution_time_ms = int(execution_time)
+            analytics["tools_executed"].append({
+                "tool": tool_name,
+                "execution_time_ms": execution_time_ms,
+                "execution_time_s": round(execution_time_ms / 1000, 2)
+            })
+            analytics["total_execution_time"] += execution_time_ms
+            analytics["tool_count"] += 1
+        
+        analytics["total_execution_time_s"] = round(analytics["total_execution_time"] / 1000, 2)
+        
+        return analytics
+    except Exception as e:
+        print(f"Error extracting tool analytics: {e}")
+        return {}
 
 def get_input_files(inputs_path):
     """Get all .txt files from inputs directory"""
@@ -136,6 +171,7 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
         # Run wingman test
         wingman_cmd = [
             config['wingman_binary_path'],
+            '-v',  # Add verbose flag
             '-c', config['wingman_config_path'],
             '-p', full_input_path,
             '-s', session_id
@@ -177,11 +213,15 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
         except Exception as e:
             output = {"raw_output": result.stdout, "parse_error": str(e)}
         
+        # Extract tool analytics from raw output
+        tool_analytics = extract_tool_analytics(result.stdout)
+        
         return {
             "success": result.returncode == 0,
             "output": output,
             "raw_output": result.stdout,
             "raw_error": result.stderr,
+            "tool_analytics": tool_analytics,
             "error": result.stderr if result.returncode != 0 else None,
             "duration": duration,
             "timestamp": datetime.now().isoformat(),

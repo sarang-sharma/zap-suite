@@ -144,6 +144,7 @@ class ZapSuite {
                 output: result.output || {},
                 raw_output: result.raw_output || '',
                 raw_error: result.raw_error || '',
+                tool_analytics: result.tool_analytics || {},
                 commands: result.commands || null,
                 session_id: result.session_id || null,
                 error: result.error || null,
@@ -232,6 +233,8 @@ class ZapSuite {
                             
                             ${run.error ? `<p><strong>Error:</strong> ${run.error}</p>` : ''}
                             
+                            ${this.formatToolAnalytics(run.tool_analytics)}
+                            
                             <div class="output-section">
                                 <h5>Analysis Results:</h5>
                                 ${this.formatAnalysisResults(run.output)}
@@ -260,6 +263,36 @@ class ZapSuite {
         
         resultsContainer.innerHTML = resultsHTML;
         testRuns.innerHTML = testRunsHTML;
+    }
+
+    formatToolAnalytics(analytics) {
+        if (!analytics || !analytics.tools_executed || analytics.tools_executed.length === 0) {
+            return '';
+        }
+
+        let html = `
+            <div class="tool-analytics-section">
+                <h5>Tool Execution Analytics:</h5>
+                <div class="tool-analytics">
+                    <p><strong>Total Tools:</strong> ${analytics.tool_count || 0}</p>
+                    <p><strong>Total Execution Time:</strong> ${analytics.total_execution_time_s || 0}s</p>
+                    
+                    <details class="tool-details">
+                        <summary>Show Individual Tool Times</summary>
+                        <div class="tool-list">
+                            ${analytics.tools_executed.map(tool => `
+                                <div class="tool-item">
+                                    <span class="tool-name">${tool.tool}</span>
+                                    <span class="tool-time">${tool.execution_time_s}s (${tool.execution_time_ms}ms)</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </details>
+                </div>
+            </div>
+        `;
+
+        return html;
     }
 
     formatAnalysisResults(output) {
