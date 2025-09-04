@@ -350,6 +350,9 @@ class ZapSuite {
                 error: result.error || null,
                 branch_checkout: result.branch_checkout || null,
                 saved_files: result.saved_files || null,
+                index_creation_failed: result.index_creation_failed || false,
+                index_creation_output: result.index_creation_output || null,
+                index_creation_error: result.index_creation_error || null,
                 duration: (endTime - startTime) / 1000, // Convert to seconds
                 timestamp: new Date().toISOString()
             };
@@ -701,6 +704,62 @@ class ZapSuite {
     }
 
     renderNoSuggestions(result) {
+        // Check for index creation failure first
+        if (result.index_creation_failed) {
+            return `
+                <div class="error-card">
+                    <div class="error-title">
+                        <span>🚫</span> Index Creation Failed
+                    </div>
+                    <div class="error-content">
+                        <p><strong>Error:</strong> Code context index creation failed - test execution stopped</p>
+                        <p class="mt-2"><strong>Impact:</strong> Wingman analysis cannot proceed without a valid code context index</p>
+                        
+                        ${result.index_creation_error ? `
+                            <div class="mt-3">
+                                <p class="font-medium text-red-700">Index Creation Error:</p>
+                                <div class="bg-red-50 border border-red-200 rounded p-2 mt-1">
+                                    <pre class="text-xs text-red-800 whitespace-pre-wrap">${result.index_creation_error}</pre>
+                                </div>
+                            </div>
+                        ` : ''}
+                        
+                        ${result.index_creation_output ? `
+                            <details class="mt-3">
+                                <summary class="cursor-pointer text-sm font-medium text-red-700 hover:text-red-900">
+                                    View Index Creation Output
+                                </summary>
+                                <pre class="code-block text-xs mt-2">${result.index_creation_output}</pre>
+                            </details>
+                        ` : ''}
+                        
+                        ${result.commands && result.commands.create_index ? `
+                            <details class="mt-3">
+                                <summary class="cursor-pointer text-sm font-medium text-red-700 hover:text-red-900">
+                                    View Index Creation Command
+                                </summary>
+                                <div class="code-block text-xs mt-2">
+                                    <strong>Command:</strong> ${result.commands.create_index}
+                                </div>
+                            </details>
+                        ` : ''}
+                        
+                        <div class="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                            <p class="text-sm text-yellow-800">
+                                <strong>💡 Troubleshooting Tips:</strong>
+                            </p>
+                            <ul class="text-xs text-yellow-700 mt-1 list-disc list-inside">
+                                <li>Check if the BWM_CODE_CONTEXT_BIN_PATH is correct and the binary exists</li>
+                                <li>Verify the repository path is accessible and contains valid code</li>
+                                <li>Ensure sufficient disk space for index creation</li>
+                                <li>Check repository permissions and git status</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
         const parsingIssue = this.detectJsonParsingIssues(result);
         
         if (parsingIssue.hasIssue) {

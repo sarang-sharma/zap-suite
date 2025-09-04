@@ -10,3 +10,8 @@ repos:
     branch: chunking-test-issue-2
     inputs_path: /Users/sarangsharma/code/inputs
     output_path: /Users/sarangsharma/code/outputs
+
+  - repo_path: /Users/sarangsharma/code/mlflow
+    branch: align_eval_assessment
+    inputs_path: /Users/sarangsharma/code/inputs-2
+    output_path: /Users/sarangsharma/code/outputs-2

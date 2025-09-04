@@ -406,6 +406,8 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
         ]
         
         # Run create_index
+        index_creation_output = ""
+        index_creation_error = ""
         try:
             result = subprocess.run(
                 create_index_cmd,
@@ -415,6 +417,9 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
                 text=True,
                 timeout=60
             )
+            index_creation_output = result.stdout or ""
+            index_creation_error = result.stderr or ""
+            
             if result.returncode == 0:
                 # Parse index path from JSON output
                 try:
@@ -435,14 +440,115 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
                             break
                 broadcast_log(session_id, f"✅ Index created: {index_path}")
             else:
-                broadcast_log(session_id, f"⚠️ Index creation failed: {result.stderr}")
-        except Exception as e:
-            error_msg = f"Warning: create_index failed: {e}"
+                # Index creation failed - stop the test execution
+                error_msg = f"Index creation failed with exit code {result.returncode}"
+                broadcast_log(session_id, f"❌ {error_msg}")
+                broadcast_log(session_id, f"💥 Index creation stderr: {result.stderr[:200]}...")
+                
+                # Save raw output for debugging
+                save_raw_output(output_path, repo_path, input_file_path, run_number, 
+                               index_creation_output, index_creation_error, False)
+                broadcast_log(session_id, f"💾 Index creation output saved to disk")
+                
+                return {
+                    "success": False,
+                    "output": {},
+                    "raw_output": "",
+                    "raw_error": error_msg,
+                    "tool_analytics": {},
+                    "error": error_msg,
+                    "duration": time.time() - start_time,
+                    "timestamp": datetime.now().isoformat(),
+                    "session_id": session_id,
+                    "index_creation_failed": True,
+                    "index_creation_output": index_creation_output,
+                    "index_creation_error": index_creation_error,
+                    "commands": {
+                        "create_index": " ".join(create_index_cmd),
+                        "wingman": "Not executed due to index creation failure"
+                    }
+                }
+        except subprocess.TimeoutExpired:
+            error_msg = "Index creation timed out after 60 seconds"
             broadcast_log(session_id, f"❌ {error_msg}")
-            print(error_msg)
+            
+            # Save timeout info
+            save_raw_output(output_path, repo_path, input_file_path, run_number, 
+                           index_creation_output, error_msg, False)
+            broadcast_log(session_id, f"💾 Index creation timeout info saved to disk")
+            
+            return {
+                "success": False,
+                "output": {},
+                "raw_output": "",
+                "raw_error": error_msg,
+                "tool_analytics": {},
+                "error": error_msg,
+                "duration": time.time() - start_time,
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "index_creation_failed": True,
+                "index_creation_output": index_creation_output,
+                "index_creation_error": error_msg,
+                "commands": {
+                    "create_index": " ".join(create_index_cmd),
+                    "wingman": "Not executed due to index creation timeout"
+                }
+            }
+        except Exception as e:
+            error_msg = f"Index creation failed with exception: {str(e)}"
+            broadcast_log(session_id, f"❌ {error_msg}")
+            
+            # Save exception info
+            save_raw_output(output_path, repo_path, input_file_path, run_number, 
+                           index_creation_output, error_msg, False)
+            broadcast_log(session_id, f"💾 Index creation exception info saved to disk")
+            
+            return {
+                "success": False,
+                "output": {},
+                "raw_output": "",
+                "raw_error": error_msg,
+                "tool_analytics": {},
+                "error": error_msg,
+                "duration": time.time() - start_time,
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "index_creation_failed": True,
+                "index_creation_output": index_creation_output,
+                "index_creation_error": error_msg,
+                "commands": {
+                    "create_index": " ".join(create_index_cmd),
+                    "wingman": "Not executed due to index creation exception"
+                }
+            }
         
+        # If we reach here, index creation was successful
         if index_path:
             env['BWM_CODE_CONTEXT_INDEX'] = index_path
+        else:
+            # This shouldn't happen if returncode was 0, but handle it just in case
+            error_msg = "Index creation succeeded but no index path found"
+            broadcast_log(session_id, f"❌ {error_msg}")
+            
+            return {
+                "success": False,
+                "output": {},
+                "raw_output": "",
+                "raw_error": error_msg,
+                "tool_analytics": {},
+                "error": error_msg,
+                "duration": time.time() - start_time,
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "index_creation_failed": True,
+                "index_creation_output": index_creation_output,
+                "index_creation_error": "No index path found in successful output",
+                "commands": {
+                    "create_index": " ".join(create_index_cmd),
+                    "wingman": "Not executed due to missing index path"
+                }
+            }
         
         # Use full path to input file
         full_input_path = os.path.join(inputs_path, input_file_path)
