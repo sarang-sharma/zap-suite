@@ -693,8 +693,9 @@ def serve_static(filename):
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
-    """Get configuration"""
-    if not config and not load_config():
+    """Get configuration - always reload from file"""
+    # Always reload config from file to get latest changes
+    if not load_config():
         return jsonify({"error": "Failed to load configuration"}), 500
     
     return jsonify(config)
