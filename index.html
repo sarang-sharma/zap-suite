@@ -70,35 +70,52 @@
 
     <!-- Loading Modal -->
     <div id="loadingModal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">
-                <span class="spinner"></span>
-                Running Tests...
-            </h3>
-            
-            <div class="progress-container">
-                <div class="progress-bar">
-                    <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+        <div class="progress-modal-content">
+            <div class="p-6 border-b border-gray-200">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                    <span class="spinner"></span>
+                    Running Tests...
+                </h3>
+                
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+                    </div>
+                    
+                    <div id="progressSteps" class="progress-steps">
+                        <div class="progress-step" id="step-scan">
+                            <span>📁</span> Scanning
+                        </div>
+                        <div class="progress-step" id="step-index">
+                            <span>🗂️</span> Indexing
+                        </div>
+                        <div class="progress-step" id="step-analyze">
+                            <span>🤖</span> Analyzing
+                        </div>
+                        <div class="progress-step" id="step-complete">
+                            <span>✅</span> Complete
+                        </div>
+                    </div>
                 </div>
                 
-                <div id="progressSteps" class="progress-steps">
-                    <div class="progress-step" id="step-scan">
-                        <span>📁</span> Scanning
-                    </div>
-                    <div class="progress-step" id="step-index">
-                        <span>🗂️</span> Indexing
-                    </div>
-                    <div class="progress-step" id="step-analyze">
-                        <span>🤖</span> Analyzing
-                    </div>
-                    <div class="progress-step" id="step-complete">
-                        <span>✅</span> Complete
+                <p id="progressText" class="text-sm text-gray-600 text-center">Initializing...</p>
+                <p id="progressDetails" class="text-xs text-gray-500 text-center mt-2"></p>
+            </div>
+            
+            <!-- Live Logs Section -->
+            <div class="px-6 py-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="text-sm font-semibold text-gray-700">Live Logs</h4>
+                    <button id="clearLogsBtn" class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded hover:bg-gray-200" onclick="app.clearProgressLogs()">
+                        Clear
+                    </button>
+                </div>
+                <div id="progressLogsContainer" class="progress-logs-container">
+                    <div class="p-3 text-center text-gray-500 text-xs">
+                        Logs will appear here during test execution...
                     </div>
                 </div>
             </div>
-            
-            <p id="progressText" class="text-sm text-gray-600 text-center">Initializing...</p>
-            <p id="progressDetails" class="text-xs text-gray-500 text-center mt-2"></p>
         </div>
     </div>
 

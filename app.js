@@ -253,6 +253,9 @@ class ZapSuite {
                     this.updateLogViewer(sessionId);
                 }
                 
+                // Update progress modal logs if modal is open
+                this.updateProgressLogs(logEntry);
+                
                 // Update progress info if available
                 if (testInfo && logEntry.message) {
                     this.updateProgressFromLog(logEntry.message, testInfo);
@@ -842,31 +845,31 @@ class ZapSuite {
             return;
         }
         
-        // Create log viewer modal
+        // Create log viewer modal with proper centering
         const logViewer = document.createElement('div');
         logViewer.id = 'logViewer';
-        logViewer.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        logViewer.className = 'log-viewer-modal';
         logViewer.innerHTML = `
-            <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-96">
-                <div class="flex items-center justify-between p-4 border-b border-gray-200">
+            <div class="log-viewer-content">
+                <div class="flex items-center justify-between p-4 border-b border-gray-200 flex-shrink-0">
                     <div class="flex items-center gap-4">
                         <h3 class="text-lg font-semibold text-gray-900">Live Test Logs</h3>
                         <select id="sessionSelector" class="text-sm border rounded px-2 py-1">
                             <option value="">Select a test session...</option>
                         </select>
                     </div>
-                    <button onclick="app.hideLogViewer()" class="text-gray-500 hover:text-gray-700">
-                        <span class="text-xl">×</span>
+                    <button onclick="app.hideLogViewer()" class="text-gray-500 hover:text-gray-700 text-2xl leading-none">
+                        ×
                     </button>
                 </div>
-                <div class="p-4">
-                    <div id="logContainer" class="bg-gray-50 rounded border h-64 overflow-y-auto text-sm">
+                <div class="p-4 flex-1 overflow-hidden">
+                    <div id="logContainer" class="log-container">
                         <div class="p-4 text-gray-500 text-center">
                             Select a test session to view logs
                         </div>
                     </div>
                 </div>
-                <div class="px-4 py-3 border-t border-gray-200 bg-gray-50 rounded-b-lg">
+                <div class="px-4 py-3 border-t border-gray-200 bg-gray-50 rounded-b-lg flex-shrink-0">
                     <div class="flex items-center justify-between text-xs text-gray-600">
                         <span>Logs update in real-time during test execution</span>
                         <span id="logStatus">Connected to ${this.activeSessions.size} sessions</span>
@@ -955,6 +958,50 @@ class ZapSuite {
         }
     }
     
+    // Progress logs methods
+    updateProgressLogs(logEntry) {
+        const progressLogsContainer = document.getElementById('progressLogsContainer');
+        if (!progressLogsContainer) return;
+        
+        // Create log entry element
+        const logElement = document.createElement('div');
+        logElement.className = 'log-entry';
+        logElement.innerHTML = `
+            <span class="text-gray-400 inline-block w-16 text-xs">
+                ${new Date(logEntry.timestamp).toLocaleTimeString().slice(-8)}
+            </span>
+            <span class="text-xs">${this.formatLogMessage(logEntry.message)}</span>
+        `;
+        
+        // If this is the first log, clear the placeholder
+        if (progressLogsContainer.children.length === 1 && 
+            progressLogsContainer.children[0].textContent.includes('Logs will appear here')) {
+            progressLogsContainer.innerHTML = '';
+        }
+        
+        // Add new log entry
+        progressLogsContainer.appendChild(logElement);
+        
+        // Auto-scroll to bottom
+        progressLogsContainer.scrollTop = progressLogsContainer.scrollHeight;
+        
+        // Limit to last 100 entries to prevent memory issues
+        while (progressLogsContainer.children.length > 100) {
+            progressLogsContainer.removeChild(progressLogsContainer.firstChild);
+        }
+    }
+    
+    clearProgressLogs() {
+        const progressLogsContainer = document.getElementById('progressLogsContainer');
+        if (progressLogsContainer) {
+            progressLogsContainer.innerHTML = `
+                <div class="p-3 text-center text-gray-500 text-xs">
+                    Logs cleared - new logs will appear during test execution...
+                </div>
+            `;
+        }
+    }
+
     // Add method to show log viewer button in results
     addLogViewerButton() {
         if (this.sessionLogs.size === 0) return;
