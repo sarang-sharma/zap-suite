@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zap Suite</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Zap Suite</h1>
+            <button id="loadConfigBtn" class="btn primary">Load Configuration</button>
+            <button id="runAllBtn" class="btn success" disabled>Run All Tests</button>
+        </header>
+
+        <div class="config-section">
+            <h2>Configuration</h2>
+            <div id="configDisplay" class="config-display">
+                <p>No configuration loaded. Please load test-suite-config.yaml</p>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>Test Runs</h2>
+            <div id="testRuns" class="test-runs">
+                <p>No tests configured. Load configuration to see test runs.</p>
+            </div>
+        </div>
+
+        <div class="results-section">
+            <h2>Results</h2>
+            <div id="resultsContainer" class="results-container">
+                <p>Results will appear here after running tests.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="loadingModal" class="modal">
+        <div class="modal-content">
+            <h3>Running Tests...</h3>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <p id="progressText">Initializing...</p>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

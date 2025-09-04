@@ -1,0 +1,104 @@
+PR DIFF:
+ --- index.ts (lines 855-1493)---
+855: -  async callExternalAPI(endpoint: string, data: any, retries: number = 3): Promise<any> {
+856: -    if (!this.checkRateLimit(endpoint)) {
+857: -      throw new Error('Rate limit exceeded');
+858: -    }
+866: -        await this.delay(1000);
+867: -        return this.callExternalAPI(endpoint, data, retries - 1);
+1413:    private async rollbackTransaction(connection: any): Promise<void> {
+1414:      await this.runQuery('ROLLBACK', connection);
+1415:    }
+1416: +
+1417: +  async getQueryMetrics(): Promise<{ totalQueries: number; avgDuration: number; cacheHitRate: number }> {
+1418: +    const totalQueries = this.transactionLog.length;
+1419: +    const avgDuration = totalQueries > 0
+1420: +      ? this.transactionLog.reduce((sum, log) => sum + log.duration, 0) / totalQueries
+1421: +      : 0;
+1422: +
+1423: +    const cacheSize = this.queryCache.size;
+1424: +    const cacheHitRate = cacheSize > 0 ? (cacheSize / Math.max(totalQueries, 1)) * 100 : 0;
+1425: +
+1426: +    return { totalQueries, avgDuration, cacheHitRate };
+1427: +  }
+1428:  }
+1429:
+1430:  export class ExternalAPIService {
+1431:    private rateLimiter: Map<string, { count: number; resetTime: number }> = new Map();
+1432:    private maxRequestsPerMinute = 60;
+1433: +  private apiHealthStatus: Map<string, { healthy: boolean; lastCheck: number; consecutiveFailures: number }> = new Map();
+1434: +  private requestQueue: Array<{ endpoint: string; data: any; resolve: Function; reject: Function; priority: number }> = [];
+1435: +  private processingQueue = false;
+1436:
+1437: +  async callExternalAPI(endpoint: string, data: any, retries: number = 3, priority: number = 0): Promise<any> {
+1438: +    return new Promise((resolve, reject) => {
+1439: +      if (this.isEndpointHealthy(endpoint) && this.checkRateLimit(endpoint)) {
+1440: +        this.executeAPICall(endpoint, data, retries).then(resolve).catch(reject);
+1441: +      } else {
+1442: +        this.requestQueue.push({ endpoint, data, resolve, reject, priority });
+1443: +        this.requestQueue.sort((a, b) => b.priority - a.priority);
+1444: +
+1445: +        if (!this.processingQueue) {
+1446: +          this.processProcessQueue();
+1447: +        }
+1448: +      }
+1449: +    });
+1450: +  }
+1451:
+1452: +  private async executeAPICall(endpoint: string, data: any, retries: number): Promise<any> {
+1453:      try {
+1454:        const response = await this.makeHttpRequest(endpoint, data);
+1455:        this.updateRateLimiter(endpoint);
+1456: +      this.updateHealthStatus(endpoint, true);
+1457:        return response;
+1458:      } catch (error) {
+1459: +      this.updateHealthStatus(endpoint, false);
+1460: +
+1461:        if (retries > 0 && this.isRetryableError(error)) {
+1462: +        await this.delay(Math.pow(2, 4 - retries) * 1000);
+1463: +        return this.executeAPICall(endpoint, data, retries - 1);
+1464:        }
+1465:        throw error;
+1466:      }
+1467:    }
+1468:
+1469: +  private async processQueue(): Promise<void> {
+1470: +    this.processingQueue = true;
+1471: +
+1472: +    while (this.requestQueue.length > 0) {
+1473: +      const request = this.requestQueue.shift()!;
+1474: +
+1475: +      if (this.isEndpointHealthy(request.endpoint) && this.checkRateLimit(request.endpoint)) {
+1476: +        try {
+1477: +          const result = await this.executeAPICall(request.endpoint, request.data, 3);
+1478: +          request.resolve(result);
+1479: +        } catch (error) {
+1480: +          request.reject(error);
+1481: +        }
+1482: +      } else {
+1483: +        this.requestQueue.unshift(request);
+1484: +        await this.delay(1000);
+1485: +      }
+1486: +    }
+1487: +
+1488: +    this.processingQueue = false;
+1489: +  }
+1490: +
+1491:    private checkRateLimit(endpoint: string): boolean {
+1492:      const now = Date.now();
+1493:      const windowStart = Math.floor(now / 60000) * 60000;
+
+
+--- index.ts (lines 884-1509)---
+884: -    return current.count < this.maxRequestsPerMinute;
+1499:        return true;
+1500:      }
+1501:
+1502: +    if (current.count >= this.maxRequestsPerMinute) {
+1503: +      return false;
+1504: +    }
+1505: +
+1506: +    return true;
+1507:    }
+1508:
+1509:    private updateRateLimiter(endpoint: string): void {
