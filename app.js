@@ -11,6 +11,14 @@ class ZapSuite {
         this.initializeEventListeners();
     }
 
+    generateSessionId() {
+        return 'xxxx-xxxx-4xxx-yxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        }) + '-' + Date.now();
+    }
+
     initializeEventListeners() {
         document.getElementById('loadConfigBtn').addEventListener('click', () => this.loadConfiguration());
         document.getElementById('runAllBtn').addEventListener('click', () => this.runAllTests());
@@ -307,6 +315,10 @@ class ZapSuite {
         const startTime = performance.now();
         const testInfo = { repo: repo.repo_path, inputFile, runNumber };
         
+        // Generate session ID upfront and connect to log stream BEFORE starting the test
+        const sessionId = this.generateSessionId();
+        this.connectToLogStream(sessionId, testInfo);
+        
         try {
             const response = await fetch('/api/run-test', {
                 method: 'POST',
@@ -316,17 +328,13 @@ class ZapSuite {
                     inputs_path: repo.inputs_path,
                     output_path: repo.output_path,
                     input_file: inputFile,
-                    run_number: runNumber
+                    run_number: runNumber,
+                    session_id: sessionId  // Pass session ID to backend
                 })
             });
             
             const result = await response.json();
             const endTime = performance.now();
-            
-            // Connect to log stream if session_id is available
-            if (result.session_id) {
-                this.connectToLogStream(result.session_id, testInfo);
-            }
             
             return {
                 repo: repo.repo_path,
@@ -338,7 +346,7 @@ class ZapSuite {
                 raw_error: result.raw_error || '',
                 tool_analytics: result.tool_analytics || {},
                 commands: result.commands || null,
-                session_id: result.session_id || null,
+                session_id: sessionId,
                 error: result.error || null,
                 branch_checkout: result.branch_checkout || null,
                 saved_files: result.saved_files || null,
@@ -466,7 +474,7 @@ class ZapSuite {
                             </details>
                         ` : ''}
                         
-                        <details class="mt-4" open>
+                        <details class="mt-4">
                             <summary class="cursor-pointer text-sm font-medium text-gray-700 hover:text-gray-900">Raw Output & Logs</summary>
                             <div class="mt-2 space-y-2">
                                 ${result.branch_checkout ? `

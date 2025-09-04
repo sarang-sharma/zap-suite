@@ -648,13 +648,17 @@ def run_test():
             branch_name = repo.get('branch')
             break
     
+    # Get session_id from request data (frontend provides it now)
+    session_id = data.get('session_id')
+    
     result = run_wingman_test(
         data['repo_path'],
         data['input_file'],
         data['inputs_path'],
         data['output_path'],
         data['run_number'],
-        branch_name
+        branch_name,
+        session_id
     )
     
     return jsonify(result)
