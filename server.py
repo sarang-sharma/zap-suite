@@ -13,9 +13,10 @@ import tempfile
 import asyncio
 import concurrent.futures
 import uuid
+import threading
 from pathlib import Path
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_template_string
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -24,6 +25,79 @@ CORS(app)
 # Global configuration
 CONFIG_FILE = 'test-suite-config.yaml'
 config = None
+
+# Global log streaming system
+active_logs = {}  # session_id -> log messages
+log_subscribers = {}  # session_id -> list of event streams
+log_lock = threading.Lock()
+
+def broadcast_log(session_id, message):
+    """Broadcast a log message to all subscribers"""
+    with log_lock:
+        # Store the message
+        if session_id not in active_logs:
+            active_logs[session_id] = []
+        active_logs[session_id].append({
+            "timestamp": datetime.now().isoformat(),
+            "message": message
+        })
+        
+        # Notify all subscribers
+        if session_id in log_subscribers:
+            # Create a copy of subscribers to avoid modification during iteration
+            subscribers = list(log_subscribers[session_id])
+            for subscriber_queue in subscribers:
+                try:
+                    subscriber_queue.put({
+                        "timestamp": datetime.now().isoformat(),
+                        "message": message,
+                        "session_id": session_id
+                    })
+                except:
+                    # Remove dead subscribers
+                    try:
+                        log_subscribers[session_id].remove(subscriber_queue)
+                    except ValueError:
+                        pass
+
+def generate_log_stream(session_id):
+    """Generator for Server-Sent Events log stream"""
+    import queue
+    
+    # Create a queue for this subscriber
+    log_queue = queue.Queue()
+    
+    with log_lock:
+        # Add this subscriber to the session
+        if session_id not in log_subscribers:
+            log_subscribers[session_id] = []
+        log_subscribers[session_id].append(log_queue)
+        
+        # Send existing logs to new subscriber
+        if session_id in active_logs:
+            for log_entry in active_logs[session_id]:
+                try:
+                    log_queue.put(log_entry)
+                except:
+                    pass
+    
+    try:
+        while True:
+            try:
+                # Wait for new log messages
+                log_entry = log_queue.get(timeout=30)  # 30 second timeout for keepalive
+                yield f"data: {json.dumps(log_entry)}\n\n"
+            except queue.Empty:
+                # Send keepalive
+                yield "data: {\"type\": \"keepalive\"}\n\n"
+    finally:
+        # Cleanup subscriber
+        with log_lock:
+            if session_id in log_subscribers and log_queue in log_subscribers[session_id]:
+                try:
+                    log_subscribers[session_id].remove(log_queue)
+                except ValueError:
+                    pass
 
 def load_config():
     """Load configuration from YAML file"""
@@ -36,34 +110,99 @@ def load_config():
         print(f"Error loading config: {e}")
         return False
 
+def clean_raw_output(raw_output):
+    """Clean raw output by removing spinner noise, ANSI sequences, and other unwanted content"""
+    if not raw_output:
+        return ""
+    
+    try:
+        import re
+        
+        # Remove ANSI escape sequences
+        cleaned = re.sub(r'\x1b\[[0-9;]*[mK]', '', raw_output)
+        
+        # Remove spinner characters and their combinations
+        cleaned = re.sub(r'[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]', '', cleaned)
+        
+        # Remove repetitive "Thinking..." patterns (more comprehensive)
+        cleaned = re.sub(r'[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*Thinking\.\.\.', '', cleaned)
+        cleaned = re.sub(r'Thinking\.\.\.', '', cleaned)
+        
+        # Remove tool execution time messages
+        cleaned = re.sub(r'Tool \w+ execution time: \d+ms', '', cleaned)
+        
+        # Remove empty lines and normalize whitespace
+        cleaned = re.sub(r'\n\s*\n', '\n', cleaned)  # Multiple newlines to single
+        cleaned = re.sub(r'^\s*\n', '', cleaned)  # Leading empty lines
+        cleaned = re.sub(r'\n\s*$', '', cleaned)  # Trailing empty lines
+        cleaned = re.sub(r' +', ' ', cleaned)  # Multiple spaces to single
+        
+        return cleaned.strip()
+        
+    except Exception as e:
+        print(f"Error cleaning raw output: {e}")
+        return raw_output
+
 def extract_json_from_output(raw_output):
-    """Extract clean JSON from wingman output, removing spinner noise and extracting from backticks"""
+    """Extract clean JSON from wingman output - simplified approach for direct JSON extraction"""
     if not raw_output:
         return None
     
     try:
-        # Remove ANSI escape sequences and spinner characters
         import re
-        cleaned = re.sub(r'\x1b\[[0-9;]*[mK]', '', raw_output)  # Remove ANSI escape sequences
-        cleaned = re.sub(r'[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]', '', cleaned)  # Remove spinner characters
-        cleaned = re.sub(r'Thinking\.\.\.', '', cleaned)  # Remove "Thinking..."
-        cleaned = re.sub(r'Tool \w+ execution time: \d+ms', '', cleaned)  # Remove tool execution times
-        cleaned = re.sub(r'\n+', '\n', cleaned)  # Normalize newlines
         
-        # Look for JSON content in backticks
+        # First clean the output
+        cleaned = clean_raw_output(raw_output)
+        
+        # Look for JSON content in backticks first (most reliable)
         json_match = re.search(r'```json\s*(.*?)\s*```', cleaned, re.DOTALL)
         if json_match:
-            return json_match.group(1).strip()
+            json_content = json_match.group(1).strip()
+            try:
+                json.loads(json_content)
+                return json_content
+            except json.JSONDecodeError:
+                pass
         
-        # Fallback: look for JSON content without backticks (try both formats)
-        json_match = re.search(r'\{[\s\S]*"analysis_results"[\s\S]*\}', cleaned)
+        # Direct approach: Look for evaluation_results JSON pattern (single line)
+        json_match = re.search(r'(\{"evaluation_results":\[.*?\]\})', cleaned)
         if json_match:
-            return json_match.group(0).strip()
+            json_content = json_match.group(1).strip()
+            try:
+                json.loads(json_content)
+                return json_content
+            except json.JSONDecodeError:
+                pass
         
-        # Try the new evaluation_results format
-        json_match = re.search(r'\{[\s\S]*"evaluation_results"[\s\S]*\}', cleaned)
+        # Fallback: Look for analysis_results JSON pattern (single line) 
+        json_match = re.search(r'(\{"analysis_results":\[.*?\]\})', cleaned)
         if json_match:
-            return json_match.group(0).strip()
+            json_content = json_match.group(1).strip()
+            try:
+                json.loads(json_content)
+                return json_content
+            except json.JSONDecodeError:
+                pass
+        
+        # Multi-line fallback for evaluation_results
+        json_match = re.search(r'(\{[^}]*"evaluation_results":\s*\[[\s\S]*?\]\s*\})', cleaned)
+        if json_match:
+            json_content = json_match.group(1).strip()
+            try:
+                json.loads(json_content)
+                return json_content
+            except json.JSONDecodeError:
+                pass
+        
+        # Multi-line fallback for analysis_results
+        json_match = re.search(r'(\{[^}]*"analysis_results":\s*\[[\s\S]*?\]\s*\})', cleaned)
+        if json_match:
+            json_content = json_match.group(1).strip()
+            try:
+                json.loads(json_content)
+                return json_content
+            except json.JSONDecodeError:
+                pass
             
         return None
     except Exception as e:
@@ -209,20 +348,31 @@ def get_input_files(inputs_path):
         print(f"Error getting input files: {e}")
         return []
 
-def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_number, branch_name=None):
-    """Run a single wingman test with timing and branch checkout"""
+def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_number, branch_name=None, session_id=None):
+    """Run a single wingman test with timing, branch checkout, and real-time log streaming"""
     start_time = time.time()
     stdout_output = ""
     stderr_output = ""
     
+    # Generate unique session ID for this entire test run if not provided
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+    
     try:
+        # Broadcast initial log
+        broadcast_log(session_id, f"🚀 Starting test: {input_file_path} (Run {run_number})")
+        broadcast_log(session_id, f"📁 Repository: {repo_path}")
+        
         # Checkout branch if specified
         if branch_name:
+            broadcast_log(session_id, f"🌿 Checking out branch: {branch_name}")
             branch_success, branch_message = checkout_branch(repo_path, branch_name)
             if not branch_success:
                 error_msg = f"Branch checkout failed: {branch_message}"
+                broadcast_log(session_id, f"❌ {error_msg}")
                 # Still save raw output even for branch failures
                 save_raw_output(output_path, repo_path, input_file_path, run_number, "", error_msg, False)
+                broadcast_log(session_id, f"💾 Raw output saved to disk")
                 return {
                     "success": False,
                     "output": {},
@@ -232,18 +382,21 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
                     "error": error_msg,
                     "duration": time.time() - start_time,
                     "timestamp": datetime.now().isoformat(),
+                    "session_id": session_id,
                     "branch_checkout": {"success": False, "message": branch_message}
                 }
-        
-        # Generate unique session ID for this entire test run
-        session_id = str(uuid.uuid4())
+            else:
+                broadcast_log(session_id, f"✅ {branch_message}")
         
         # Set up environment variables
+        broadcast_log(session_id, "🔧 Setting up environment variables...")
         env = os.environ.copy()
         env['PERPLEXITY_API_KEY'] = config['perplexity_key']
         env['BWM_CODE_CONTEXT_BIN_PATH'] = '/Users/sarangsharma/code/code-context/modules/code-context/code-context'
+        broadcast_log(session_id, "✅ Environment variables configured")
         
         # Create index if needed - using the same session ID
+        broadcast_log(session_id, "📇 Creating code context index...")
         index_path = None
         create_index_cmd = [
             env['BWM_CODE_CONTEXT_BIN_PATH'],
@@ -280,14 +433,20 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
                         if 'INDEX_PATH=' in line:
                             index_path = line.split('INDEX_PATH=')[1].strip()
                             break
+                broadcast_log(session_id, f"✅ Index created: {index_path}")
+            else:
+                broadcast_log(session_id, f"⚠️ Index creation failed: {result.stderr}")
         except Exception as e:
-            print(f"Warning: create_index failed: {e}")
+            error_msg = f"Warning: create_index failed: {e}"
+            broadcast_log(session_id, f"❌ {error_msg}")
+            print(error_msg)
         
         if index_path:
             env['BWM_CODE_CONTEXT_INDEX'] = index_path
         
         # Use full path to input file
         full_input_path = os.path.join(inputs_path, input_file_path)
+        broadcast_log(session_id, f"📄 Input file: {input_file_path}")
         
         # Run wingman test
         wingman_cmd = [
@@ -305,6 +464,9 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
         print(f"Environment variables:")
         for key in ['PERPLEXITY_API_KEY', 'BWM_CODE_CONTEXT_BIN_PATH', 'BWM_CODE_CONTEXT_INDEX']:
             print(f"  {key}={env.get(key, 'NOT SET')}")
+        
+        broadcast_log(session_id, f"⚙️ Executing wingman analysis...")
+        broadcast_log(session_id, f"🕒 Starting analysis at {datetime.now().strftime('%H:%M:%S')}")
         
         result = subprocess.run(
             wingman_cmd,
@@ -326,8 +488,22 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
         end_time = time.time()
         duration = end_time - start_time
         
+        # Log completion status
+        if result.returncode == 0:
+            broadcast_log(session_id, f"✅ Analysis completed successfully in {duration:.1f}s")
+        else:
+            broadcast_log(session_id, f"❌ Analysis failed (exit code: {result.returncode}) after {duration:.1f}s")
+            if stderr_output:
+                broadcast_log(session_id, f"💥 Error: {stderr_output[:200]}...")
+        
         # Always save raw output to files
+        broadcast_log(session_id, "💾 Saving raw output to disk...")
         saved_files = save_raw_output(output_path, repo_path, input_file_path, run_number, stdout_output, stderr_output, result.returncode == 0)
+        if saved_files:
+            broadcast_log(session_id, f"✅ Raw output saved: {saved_files.get('stdout_file', 'N/A')}")
+        
+        # Parse and analyze results
+        broadcast_log(session_id, "🔍 Parsing analysis results...")
         
         # Parse JSON output - extract content from backticks
         try:
@@ -346,7 +522,7 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
         response = {
             "success": result.returncode == 0,
             "output": output,
-            "raw_output": stdout_output,
+            "raw_output": clean_raw_output(stdout_output),  # Send cleaned output to frontend
             "raw_error": stderr_output,
             "tool_analytics": tool_analytics,
             "error": stderr_output if result.returncode != 0 else None,
@@ -431,6 +607,27 @@ def get_input_files_api():
         return jsonify({"files": files})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/logs/stream/<session_id>')
+def stream_logs(session_id):
+    """Stream logs for a specific session using Server-Sent Events"""
+    return Response(
+        generate_log_stream(session_id),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Cache-Control'
+        }
+    )
+
+@app.route('/api/logs/<session_id>')
+def get_logs(session_id):
+    """Get existing logs for a session"""
+    with log_lock:
+        logs = active_logs.get(session_id, [])
+        return jsonify({"logs": logs, "session_id": session_id})
 
 @app.route('/api/run-test', methods=['POST'])
 def run_test():

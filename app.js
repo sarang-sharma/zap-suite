@@ -1,9 +1,12 @@
-// Zap Suite Application - Redesigned for Easy Access to Suggestions
+// Zap Suite Application - Redesigned for Easy Access to Suggestions with Real-time Logging
 class ZapSuite {
     constructor() {
         this.config = null;
         this.testResults = [];
         this.isRunning = false;
+        this.activeSessions = new Map(); // session_id -> EventSource
+        this.sessionLogs = new Map(); // session_id -> logs array
+        this.activeLogViewer = null; // Currently viewed session
         
         this.initializeEventListeners();
     }
@@ -225,8 +228,81 @@ class ZapSuite {
         }
     }
 
+    // Real-time log streaming methods
+    connectToLogStream(sessionId, testInfo) {
+        if (this.activeSessions.has(sessionId)) {
+            return; // Already connected
+        }
+        
+        const eventSource = new EventSource(`/api/logs/stream/${sessionId}`);
+        this.activeSessions.set(sessionId, eventSource);
+        this.sessionLogs.set(sessionId, []);
+        
+        eventSource.onmessage = (event) => {
+            try {
+                const logEntry = JSON.parse(event.data);
+                if (logEntry.type === 'keepalive') return;
+                
+                // Store the log
+                const logs = this.sessionLogs.get(sessionId) || [];
+                logs.push(logEntry);
+                this.sessionLogs.set(sessionId, logs);
+                
+                // Update UI if this session is currently being viewed
+                if (this.activeLogViewer === sessionId) {
+                    this.updateLogViewer(sessionId);
+                }
+                
+                // Update progress info if available
+                if (testInfo && logEntry.message) {
+                    this.updateProgressFromLog(logEntry.message, testInfo);
+                }
+            } catch (error) {
+                console.error('Error parsing log message:', error);
+            }
+        };
+        
+        eventSource.onerror = (error) => {
+            console.error('EventSource error for session:', sessionId, error);
+            // Auto-reconnect after a delay
+            setTimeout(() => {
+                if (this.activeSessions.has(sessionId)) {
+                    this.disconnectFromLogStream(sessionId);
+                    this.connectToLogStream(sessionId, testInfo);
+                }
+            }, 1000);
+        };
+    }
+    
+    disconnectFromLogStream(sessionId) {
+        const eventSource = this.activeSessions.get(sessionId);
+        if (eventSource) {
+            eventSource.close();
+            this.activeSessions.delete(sessionId);
+        }
+    }
+    
+    updateProgressFromLog(message, testInfo) {
+        const progressDetails = document.getElementById('progressDetails');
+        if (progressDetails && message) {
+            // Extract meaningful progress info from log messages
+            if (message.includes('Starting test:')) {
+                progressDetails.textContent = `${testInfo.repo} - ${testInfo.inputFile} (Run ${testInfo.runNumber})`;
+            } else if (message.includes('Creating code context index')) {
+                progressDetails.textContent = `Creating index for ${testInfo.inputFile}...`;
+            } else if (message.includes('Executing wingman analysis')) {
+                progressDetails.textContent = `Analyzing ${testInfo.inputFile} with Wingman AI...`;
+            } else if (message.includes('Analysis completed successfully')) {
+                progressDetails.textContent = `✅ ${testInfo.inputFile} completed successfully`;
+            } else if (message.includes('Analysis failed')) {
+                progressDetails.textContent = `❌ ${testInfo.inputFile} failed`;
+            }
+        }
+    }
+    
     async runSingleTest(repo, inputFile, runNumber) {
         const startTime = performance.now();
+        const testInfo = { repo: repo.repo_path, inputFile, runNumber };
         
         try {
             const response = await fetch('/api/run-test', {
@@ -243,6 +319,11 @@ class ZapSuite {
             
             const result = await response.json();
             const endTime = performance.now();
+            
+            // Connect to log stream if session_id is available
+            if (result.session_id) {
+                this.connectToLogStream(result.session_id, testInfo);
+            }
             
             return {
                 repo: repo.repo_path,
@@ -279,6 +360,9 @@ class ZapSuite {
     displayResults() {
         this.updateQuickStats();
         this.generateTestResults();
+        
+        // Add log viewer button if we have sessions
+        this.addLogViewerButton();
         
         // Show results section
         document.getElementById('results').classList.remove('hidden');
@@ -348,6 +432,12 @@ class ZapSuite {
                             </span>
                             <span class="text-sm text-gray-500">${result.duration.toFixed(2)}s</span>
                             <span class="text-sm text-gray-500">${new Date(result.timestamp).toLocaleTimeString()}</span>
+                            ${result.session_id ? `
+                                <button onclick="app.viewSessionLogs('${result.session_id}')" 
+                                        class="text-xs px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200">
+                                    📋 View Logs
+                                </button>
+                            ` : ''}
                         </div>
                         ${hasValidSuggestions ? `<span class="badge badge-accurate">${suggestions.length} suggestions</span>` : ''}
                     </div>
@@ -703,9 +793,188 @@ class ZapSuite {
         
         return grouped;
     }
+
+    // Log viewer methods
+    updateLogViewer(sessionId) {
+        const logContainer = document.getElementById('logContainer');
+        if (!logContainer) return; // Log viewer not initialized yet
+        
+        const logs = this.sessionLogs.get(sessionId) || [];
+        
+        // Update logs display
+        logContainer.innerHTML = logs.map(log => `
+            <div class="log-entry flex items-start gap-2 py-1 px-2 text-xs font-mono">
+                <span class="text-gray-400 flex-shrink-0 w-20">
+                    ${new Date(log.timestamp).toLocaleTimeString()}
+                </span>
+                <span class="flex-1 break-all">${this.formatLogMessage(log.message)}</span>
+            </div>
+        `).join('');
+        
+        // Auto-scroll to bottom
+        logContainer.scrollTop = logContainer.scrollHeight;
+        
+        // Update session selector
+        const sessionSelector = document.getElementById('sessionSelector');
+        if (sessionSelector) {
+            this.updateSessionSelector();
+        }
+    }
+    
+    formatLogMessage(message) {
+        // Add some basic formatting for log messages
+        if (message.includes('✅')) {
+            return `<span class="text-green-600">${message}</span>`;
+        } else if (message.includes('❌') || message.includes('💥')) {
+            return `<span class="text-red-600">${message}</span>`;
+        } else if (message.includes('🚀') || message.includes('⚙️')) {
+            return `<span class="text-blue-600">${message}</span>`;
+        } else if (message.includes('⚠️')) {
+            return `<span class="text-yellow-600">${message}</span>`;
+        }
+        return message;
+    }
+    
+    showLogViewer() {
+        const existingViewer = document.getElementById('logViewer');
+        if (existingViewer) {
+            existingViewer.classList.remove('hidden');
+            return;
+        }
+        
+        // Create log viewer modal
+        const logViewer = document.createElement('div');
+        logViewer.id = 'logViewer';
+        logViewer.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        logViewer.innerHTML = `
+            <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-96">
+                <div class="flex items-center justify-between p-4 border-b border-gray-200">
+                    <div class="flex items-center gap-4">
+                        <h3 class="text-lg font-semibold text-gray-900">Live Test Logs</h3>
+                        <select id="sessionSelector" class="text-sm border rounded px-2 py-1">
+                            <option value="">Select a test session...</option>
+                        </select>
+                    </div>
+                    <button onclick="app.hideLogViewer()" class="text-gray-500 hover:text-gray-700">
+                        <span class="text-xl">×</span>
+                    </button>
+                </div>
+                <div class="p-4">
+                    <div id="logContainer" class="bg-gray-50 rounded border h-64 overflow-y-auto text-sm">
+                        <div class="p-4 text-gray-500 text-center">
+                            Select a test session to view logs
+                        </div>
+                    </div>
+                </div>
+                <div class="px-4 py-3 border-t border-gray-200 bg-gray-50 rounded-b-lg">
+                    <div class="flex items-center justify-between text-xs text-gray-600">
+                        <span>Logs update in real-time during test execution</span>
+                        <span id="logStatus">Connected to ${this.activeSessions.size} sessions</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(logViewer);
+        
+        // Add event listener for session selection
+        const sessionSelector = document.getElementById('sessionSelector');
+        sessionSelector.addEventListener('change', (e) => {
+            if (e.target.value) {
+                this.switchLogSession(e.target.value);
+            }
+        });
+        
+        this.updateSessionSelector();
+    }
+    
+    hideLogViewer() {
+        const logViewer = document.getElementById('logViewer');
+        if (logViewer) {
+            logViewer.classList.add('hidden');
+        }
+    }
+    
+    updateSessionSelector() {
+        const sessionSelector = document.getElementById('sessionSelector');
+        if (!sessionSelector) return;
+        
+        const currentValue = sessionSelector.value;
+        sessionSelector.innerHTML = '<option value="">Select a test session...</option>';
+        
+        // Add sessions with their test info
+        for (const [sessionId, logs] of this.sessionLogs.entries()) {
+            if (logs.length > 0) {
+                let sessionLabel = sessionId.substring(0, 8);
+                
+                // Look for test info in logs
+                const testInfoLogs = logs.filter(log => log.message.includes('Starting test:'));
+                if (testInfoLogs.length > 0) {
+                    const match = testInfoLogs[0].message.match(/Starting test: (.+?) \(Run (\d+)\)/);
+                    if (match) {
+                        sessionLabel = `${match[1]} (Run ${match[2]})`;
+                    }
+                }
+                
+                const option = document.createElement('option');
+                option.value = sessionId;
+                option.textContent = sessionLabel;
+                option.selected = sessionId === currentValue;
+                sessionSelector.appendChild(option);
+            }
+        }
+        
+        // If no current selection but we have sessions, select the first one
+        if (!currentValue && this.sessionLogs.size > 0) {
+            const firstSessionId = this.sessionLogs.keys().next().value;
+            sessionSelector.value = firstSessionId;
+            this.switchLogSession(firstSessionId);
+        }
+    }
+    
+    switchLogSession(sessionId) {
+        this.activeLogViewer = sessionId;
+        this.updateLogViewer(sessionId);
+        
+        const logStatus = document.getElementById('logStatus');
+        if (logStatus) {
+            const isActive = this.activeSessions.has(sessionId);
+            logStatus.textContent = isActive ? `Viewing active session` : `Viewing completed session`;
+            logStatus.className = `text-xs ${isActive ? 'text-green-600' : 'text-gray-600'}`;
+        }
+    }
+    
+    viewSessionLogs(sessionId) {
+        this.showLogViewer();
+        if (sessionId) {
+            const sessionSelector = document.getElementById('sessionSelector');
+            if (sessionSelector) {
+                sessionSelector.value = sessionId;
+                this.switchLogSession(sessionId);
+            }
+        }
+    }
+    
+    // Add method to show log viewer button in results
+    addLogViewerButton() {
+        if (this.sessionLogs.size === 0) return;
+        
+        const resultsHeader = document.querySelector('#results .flex.items-center.justify-between');
+        if (resultsHeader && !document.getElementById('showLogsBtn')) {
+            const button = document.createElement('button');
+            button.id = 'showLogsBtn';
+            button.className = 'btn btn-outline text-sm';
+            button.textContent = `📋 View Live Logs (${this.sessionLogs.size})`;
+            button.onclick = () => this.showLogViewer();
+            resultsHeader.appendChild(button);
+        }
+    }
 }
+
+// Make app instance globally available for log viewer controls
+let app;
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
-    new ZapSuite();
+    app = new ZapSuite();
 });
