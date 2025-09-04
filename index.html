@@ -6,43 +6,99 @@
     <title>Zap Suite</title>
     <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-    <div class="container">
-        <header>
-            <h1>Zap Suite</h1>
-            <button id="loadConfigBtn" class="btn primary">Load Configuration</button>
-            <button id="runAllBtn" class="btn success" disabled>Run All Tests</button>
-        </header>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 px-6 py-4">
+        <div class="flex items-center justify-between max-w-7xl mx-auto">
+            <h1 class="text-2xl font-bold text-gray-900">Zap Suite</h1>
+            <div class="flex gap-3">
+                <button id="loadConfigBtn" class="btn btn-primary">Load Configuration</button>
+                <button id="runAllBtn" class="btn btn-success" disabled>Run All Tests</button>
+            </div>
+        </div>
+    </header>
 
-        <div class="config-section">
-            <h2>Configuration</h2>
-            <div id="configDisplay" class="config-display">
-                <p>No configuration loaded. Please load test-suite-config.yaml</p>
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-6 py-8">
+        <!-- Configuration Section -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-8">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Configuration</h2>
+            </div>
+            <div id="configDisplay" class="px-6 py-4">
+                <p class="text-gray-500">No configuration loaded. Please load test-suite-config.yaml</p>
             </div>
         </div>
 
-        <div class="test-section">
-            <h2>Test Runs</h2>
-            <div id="testRuns" class="test-runs">
-                <p>No tests configured. Load configuration to see test runs.</p>
+        <!-- Results Section -->
+        <div id="results" class="hidden">
+            <!-- Quick Stats -->
+            <div id="quickStats" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                    <div class="text-2xl font-bold text-blue-600" id="totalTests">0</div>
+                    <div class="text-sm text-gray-500">Total Tests</div>
+                </div>
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                    <div class="text-2xl font-bold text-green-600" id="successfulTests">0</div>
+                    <div class="text-sm text-gray-500">Successful</div>
+                </div>
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                    <div class="text-2xl font-bold text-red-600" id="failedTests">0</div>
+                    <div class="text-sm text-gray-500">Failed</div>
+                </div>
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                    <div class="text-2xl font-bold text-purple-600" id="avgDuration">0s</div>
+                    <div class="text-sm text-gray-500">Avg Duration</div>
+                </div>
+            </div>
+
+            <!-- Results Header -->
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-semibold text-gray-900">Suggestion Analysis Results</h2>
+                <div class="flex gap-2">
+                    <button id="expandAllBtn" class="btn btn-secondary btn-sm">Expand All</button>
+                    <button id="collapseAllBtn" class="btn btn-secondary btn-sm">Collapse All</button>
+                </div>
+            </div>
+
+            <!-- Test Results Container -->
+            <div id="testResults" class="space-y-6">
+                <!-- Results will be dynamically inserted here -->
             </div>
         </div>
+    </main>
 
-        <div class="results-section">
-            <h2>Results</h2>
-            <div id="resultsContainer" class="results-container">
-                <p>Results will appear here after running tests.</p>
-            </div>
-        </div>
-    </div>
-
-    <div id="loadingModal" class="modal">
+    <!-- Loading Modal -->
+    <div id="loadingModal" class="modal-overlay hidden">
         <div class="modal-content">
-            <h3>Running Tests...</h3>
-            <div class="progress-bar">
-                <div id="progressFill" class="progress-fill"></div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">
+                <span class="spinner"></span>
+                Running Tests...
+            </h3>
+            
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+                </div>
+                
+                <div id="progressSteps" class="progress-steps">
+                    <div class="progress-step" id="step-scan">
+                        <span>📁</span> Scanning
+                    </div>
+                    <div class="progress-step" id="step-index">
+                        <span>🗂️</span> Indexing
+                    </div>
+                    <div class="progress-step" id="step-analyze">
+                        <span>🤖</span> Analyzing
+                    </div>
+                    <div class="progress-step" id="step-complete">
+                        <span>✅</span> Complete
+                    </div>
+                </div>
             </div>
-            <p id="progressText">Initializing...</p>
+            
+            <p id="progressText" class="text-sm text-gray-600 text-center">Initializing...</p>
+            <p id="progressDetails" class="text-xs text-gray-500 text-center mt-2"></p>
         </div>
     </div>
 

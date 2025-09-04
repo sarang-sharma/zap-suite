@@ -127,8 +127,7 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
             env['BWM_CODE_CONTEXT_BIN_PATH'],
             'create_index',
             '-r',
-            repo_path,
-            '-s', session_id  # Use same session ID for create_index
+            repo_path
         ]
         
         # Run create_index

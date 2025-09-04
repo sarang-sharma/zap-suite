@@ -1,7 +1,7 @@
 # Wingman Test Suite Configuration
 wingman_binary_path: /Users/sarangsharma/code/bito-wingman/build/bitowingman
 wingman_config_path: /Users/sarangsharma/.bitowingman/config.json
-perplexity_key: XXXXXXXXXXXXXXXXXXXXX
+perplexity_key: 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
 run_count: 1
 parallel_workers: 3
 
@@ -9,7 +9,3 @@ repos:
   - repo_path: /Users/sarangsharma/code/faultline
     inputs_path: /Users/sarangsharma/code/inputs
     output_path: /Users/sarangsharma/code/outputs
-
-  - repo_path: /Users/sarangsharma/code/mlflow
-    inputs_path: /Users/sarangsharma/code/inputs-2
-    output_path: /Users/sarangsharma/code/outputs-2
