@@ -390,20 +390,14 @@ def get_input_files(inputs_path):
         print(f"Error getting input files: {e}")
         return []
 
-def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_number, branch_name=None, session_id=None):
-    """Run a single wingman test with timing, branch checkout, and real-time log streaming"""
-    start_time = time.time()
-    stdout_output = ""
-    stderr_output = ""
-    
-    # Generate unique session ID for this entire test run if not provided
+def create_index_for_repo(repo_path, branch_name=None, session_id=None):
+    """Create code context index for a repository/branch combination"""
     if session_id is None:
         session_id = str(uuid.uuid4())
     
     try:
         # Broadcast initial log
-        broadcast_log(session_id, f"🚀 Starting test: {input_file_path} (Run {run_number})")
-        broadcast_log(session_id, f"📁 Repository: {repo_path}")
+        broadcast_log(session_id, f"🏗️ Creating index for repository: {repo_path}")
         
         # Checkout branch if specified
         if branch_name:
@@ -412,19 +406,9 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
             if not branch_success:
                 error_msg = f"Branch checkout failed: {branch_message}"
                 broadcast_log(session_id, f"❌ {error_msg}")
-                # Still save raw output even for branch failures
-                save_raw_output(output_path, repo_path, input_file_path, run_number, "", error_msg, False)
-                broadcast_log(session_id, f"💾 Raw output saved to disk")
                 return {
                     "success": False,
-                    "output": {},
-                    "raw_output": "",
-                    "raw_error": error_msg,
-                    "tool_analytics": {},
                     "error": error_msg,
-                    "duration": time.time() - start_time,
-                    "timestamp": datetime.now().isoformat(),
-                    "session_id": session_id,
                     "branch_checkout": {"success": False, "message": branch_message}
                 }
             else:
@@ -437,9 +421,8 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
         env['BWM_CODE_CONTEXT_BIN_PATH'] = '/Users/sarangsharma/code/code-context/modules/code-context/code-context'
         broadcast_log(session_id, "✅ Environment variables configured")
         
-        # Create index if needed - using the same session ID
+        # Create index
         broadcast_log(session_id, "📇 Creating code context index...")
-        index_path = None
         create_index_cmd = [
             env['BWM_CODE_CONTEXT_BIN_PATH'],
             'create_index',
@@ -447,150 +430,122 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
             repo_path
         ]
         
-        # Run create_index
         index_creation_output = ""
         index_creation_error = ""
-        try:
-            result = subprocess.run(
-                create_index_cmd,
-                cwd=repo_path,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            index_creation_output = result.stdout or ""
-            index_creation_error = result.stderr or ""
-            
-            if result.returncode == 0:
-                # Parse index path from JSON output
-                try:
-                    output_json = json.loads(result.stdout)
-                    if 'output' in output_json and len(output_json['output']) > 0:
-                        index_path = output_json['output'][0].get('index_path')
-                    else:
-                        # Fallback to parsing stdout for index_path
-                        for line in result.stdout.split('\n'):
-                            if 'INDEX_PATH=' in line:
-                                index_path = line.split('INDEX_PATH=')[1].strip()
-                                break
-                except:
+        
+        result = subprocess.run(
+            create_index_cmd,
+            cwd=repo_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        index_creation_output = result.stdout or ""
+        index_creation_error = result.stderr or ""
+        
+        if result.returncode == 0:
+            # Parse index path from JSON output
+            index_path = None
+            try:
+                output_json = json.loads(result.stdout)
+                if 'output' in output_json and len(output_json['output']) > 0:
+                    index_path = output_json['output'][0].get('index_path')
+                else:
                     # Fallback to parsing stdout for index_path
                     for line in result.stdout.split('\n'):
                         if 'INDEX_PATH=' in line:
                             index_path = line.split('INDEX_PATH=')[1].strip()
                             break
-                broadcast_log(session_id, f"✅ Index created: {index_path}")
-            else:
-                # Index creation failed - stop the test execution
-                error_msg = f"Index creation failed with exit code {result.returncode}"
-                broadcast_log(session_id, f"❌ {error_msg}")
-                broadcast_log(session_id, f"💥 Index creation stderr: {result.stderr[:200]}...")
-                
-                # Save raw output for debugging
-                save_raw_output(output_path, repo_path, input_file_path, run_number, 
-                               index_creation_output, index_creation_error, False)
-                broadcast_log(session_id, f"💾 Index creation output saved to disk")
-                
+            except:
+                # Fallback to parsing stdout for index_path
+                for line in result.stdout.split('\n'):
+                    if 'INDEX_PATH=' in line:
+                        index_path = line.split('INDEX_PATH=')[1].strip()
+                        break
+            
+            if index_path:
+                broadcast_log(session_id, f"✅ Index created successfully: {index_path}")
                 return {
-                    "success": False,
-                    "output": {},
-                    "raw_output": "",
-                    "raw_error": error_msg,
-                    "tool_analytics": {},
-                    "error": error_msg,
-                    "duration": time.time() - start_time,
-                    "timestamp": datetime.now().isoformat(),
-                    "session_id": session_id,
-                    "index_creation_failed": True,
-                    "index_creation_output": index_creation_output,
-                    "index_creation_error": index_creation_error,
+                    "success": True,
+                    "index_path": index_path,
+                    "creation_output": index_creation_output,
                     "commands": {
-                        "create_index": " ".join(create_index_cmd),
-                        "wingman": "Not executed due to index creation failure"
+                        "create_index": " ".join(create_index_cmd)
                     }
                 }
-        except subprocess.TimeoutExpired:
-            error_msg = "Index creation timed out after 60 seconds"
-            broadcast_log(session_id, f"❌ {error_msg}")
-            
-            # Save timeout info
-            save_raw_output(output_path, repo_path, input_file_path, run_number, 
-                           index_creation_output, error_msg, False)
-            broadcast_log(session_id, f"💾 Index creation timeout info saved to disk")
-            
-            return {
-                "success": False,
-                "output": {},
-                "raw_output": "",
-                "raw_error": error_msg,
-                "tool_analytics": {},
-                "error": error_msg,
-                "duration": time.time() - start_time,
-                "timestamp": datetime.now().isoformat(),
-                "session_id": session_id,
-                "index_creation_failed": True,
-                "index_creation_output": index_creation_output,
-                "index_creation_error": error_msg,
-                "commands": {
-                    "create_index": " ".join(create_index_cmd),
-                    "wingman": "Not executed due to index creation timeout"
+            else:
+                error_msg = "Index creation succeeded but no index path found"
+                broadcast_log(session_id, f"❌ {error_msg}")
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "creation_output": index_creation_output,
+                    "creation_error": "No index path found in successful output"
                 }
-            }
-        except Exception as e:
-            error_msg = f"Index creation failed with exception: {str(e)}"
+        else:
+            error_msg = f"Index creation failed with exit code {result.returncode}"
             broadcast_log(session_id, f"❌ {error_msg}")
-            
-            # Save exception info
-            save_raw_output(output_path, repo_path, input_file_path, run_number, 
-                           index_creation_output, error_msg, False)
-            broadcast_log(session_id, f"💾 Index creation exception info saved to disk")
-            
+            broadcast_log(session_id, f"💥 Index creation stderr: {result.stderr[:200]}...")
             return {
                 "success": False,
-                "output": {},
-                "raw_output": "",
-                "raw_error": error_msg,
-                "tool_analytics": {},
                 "error": error_msg,
-                "duration": time.time() - start_time,
-                "timestamp": datetime.now().isoformat(),
-                "session_id": session_id,
-                "index_creation_failed": True,
-                "index_creation_output": index_creation_output,
-                "index_creation_error": error_msg,
+                "creation_output": index_creation_output,
+                "creation_error": index_creation_error,
                 "commands": {
-                    "create_index": " ".join(create_index_cmd),
-                    "wingman": "Not executed due to index creation exception"
+                    "create_index": " ".join(create_index_cmd)
                 }
             }
         
-        # If we reach here, index creation was successful
+    except subprocess.TimeoutExpired:
+        error_msg = "Index creation timed out after 60 seconds"
+        broadcast_log(session_id, f"❌ {error_msg}")
+        return {
+            "success": False,
+            "error": error_msg,
+            "creation_error": error_msg,
+            "timeout": True
+        }
+    except Exception as e:
+        error_msg = f"Index creation failed with exception: {str(e)}"
+        broadcast_log(session_id, f"❌ {error_msg}")
+        return {
+            "success": False,
+            "error": error_msg,
+            "creation_error": error_msg,
+            "exception": True
+        }
+
+def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_number, index_path=None, session_id=None):
+    """Run a single wingman test with pre-created index"""
+    start_time = time.time()
+    stdout_output = ""
+    stderr_output = ""
+    
+    # Generate unique session ID for this test if not provided
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+    
+    try:
+        # Broadcast initial log
+        broadcast_log(session_id, f"🚀 Starting test: {input_file_path} (Run {run_number})")
+        broadcast_log(session_id, f"📁 Repository: {repo_path}")
+        
+        # Set up environment variables
+        broadcast_log(session_id, "🔧 Setting up environment variables...")
+        env = os.environ.copy()
+        env['PERPLEXITY_API_KEY'] = config['perplexity_key']
+        env['BWM_CODE_CONTEXT_BIN_PATH'] = '/Users/sarangsharma/code/code-context/modules/code-context/code-context'
+        
+        # Use provided index path
         if index_path:
             env['BWM_CODE_CONTEXT_INDEX'] = index_path
+            broadcast_log(session_id, f"📇 Using existing index: {index_path}")
         else:
-            # This shouldn't happen if returncode was 0, but handle it just in case
-            error_msg = "Index creation succeeded but no index path found"
-            broadcast_log(session_id, f"❌ {error_msg}")
-            
-            return {
-                "success": False,
-                "output": {},
-                "raw_output": "",
-                "raw_error": error_msg,
-                "tool_analytics": {},
-                "error": error_msg,
-                "duration": time.time() - start_time,
-                "timestamp": datetime.now().isoformat(),
-                "session_id": session_id,
-                "index_creation_failed": True,
-                "index_creation_output": index_creation_output,
-                "index_creation_error": "No index path found in successful output",
-                "commands": {
-                    "create_index": " ".join(create_index_cmd),
-                    "wingman": "Not executed due to missing index path"
-                }
-            }
+            broadcast_log(session_id, "⚠️ No index path provided - test may fail")
+        
+        broadcast_log(session_id, "✅ Environment variables configured")
         
         # Use full path to input file
         full_input_path = os.path.join(inputs_path, input_file_path)
@@ -678,15 +633,10 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
             "timestamp": datetime.now().isoformat(),
             "session_id": session_id,
             "commands": {
-                "create_index": " ".join(create_index_cmd) if create_index_cmd else None,
                 "wingman": " ".join(wingman_cmd),
                 "index_path": index_path
             }
         }
-        
-        # Add branch checkout info if applicable
-        if branch_name:
-            response["branch_checkout"] = {"success": True, "message": f"Successfully checked out branch '{branch_name}'"}
         
         # Add saved file info
         if saved_files:
@@ -706,7 +656,8 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
             "tool_analytics": {},
             "error": error_msg,
             "duration": 300,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id
         }
     except Exception as e:
         # Save raw output even for exceptions
@@ -720,8 +671,152 @@ def run_wingman_test(repo_path, input_file_path, inputs_path, output_path, run_n
             "tool_analytics": {},
             "error": error_msg,
             "duration": time.time() - start_time,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id
         }
+
+def run_tests_for_repo(repo_config, session_id=None):
+    """Run all tests for a single repository with shared index"""
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+    
+    repo_path = repo_config['repo_path']
+    inputs_path = repo_config['inputs_path']
+    output_path = repo_config['output_path']
+    branch_name = repo_config.get('branch')
+    
+    results = []
+    
+    try:
+        # Step 1: Create index once for this repo/branch
+        broadcast_log(session_id, f"📦 Starting optimized test suite for repository: {repo_path}")
+        index_result = create_index_for_repo(repo_path, branch_name, session_id)
+        
+        if not index_result["success"]:
+            # Index creation failed - all tests for this repo will fail
+            input_files = get_input_files(inputs_path)
+            for input_file in input_files:
+                for run in range(1, config['run_count'] + 1):
+                    results.append({
+                        "repo": repo_path,
+                        "input_file": input_file,
+                        "run_number": run,
+                        "success": False,
+                        "output": {},
+                        "raw_output": "",
+                        "raw_error": index_result["error"],
+                        "tool_analytics": {},
+                        "error": f"Index creation failed: {index_result['error']}",
+                        "duration": 0,
+                        "timestamp": datetime.now().isoformat(),
+                        "session_id": session_id,
+                        "index_creation_failed": True,
+                        **index_result
+                    })
+            return results
+        
+        # Step 2: Get the index path and run all tests
+        index_path = index_result["index_path"]
+        broadcast_log(session_id, f"🎯 Index ready! Running all tests with shared index...")
+        
+        # Get all input files
+        input_files = get_input_files(inputs_path)
+        broadcast_log(session_id, f"📋 Found {len(input_files)} input files, {config['run_count']} runs each")
+        
+        # Prepare all test tasks for parallel execution
+        test_tasks = []
+        for input_file in input_files:
+            for run in range(1, config['run_count'] + 1):
+                test_tasks.append({
+                    "repo_path": repo_path,
+                    "input_file": input_file,
+                    "inputs_path": inputs_path,
+                    "output_path": output_path,
+                    "run_number": run,
+                    "index_path": index_path,
+                    "session_id": f"{session_id}_test_{len(test_tasks)}"  # Unique session per test
+                })
+        
+        broadcast_log(session_id, f"🚀 Executing {len(test_tasks)} tests in parallel...")
+        
+        # Execute tests in parallel using the shared index
+        max_workers = config.get('parallel_workers', 3)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_task = {
+                executor.submit(
+                    run_wingman_test,
+                    task["repo_path"],
+                    task["input_file"],
+                    task["inputs_path"],
+                    task["output_path"],
+                    task["run_number"],
+                    task["index_path"],
+                    task["session_id"]
+                ): task for task in test_tasks
+            }
+            
+            # Collect results as they complete
+            completed = 0
+            for future in concurrent.futures.as_completed(future_to_task):
+                task = future_to_task[future]
+                completed += 1
+                
+                try:
+                    result = future.result()
+                    results.append({
+                        "repo": repo_path,
+                        "input_file": task["input_file"],
+                        "run_number": task["run_number"],
+                        **result
+                    })
+                    
+                    # Log progress
+                    status = "✅" if result.get("success", False) else "❌"
+                    broadcast_log(session_id, f"{status} Test {completed}/{len(test_tasks)} completed: {task['input_file']} run {task['run_number']}")
+                    
+                except Exception as exc:
+                    results.append({
+                        "repo": repo_path,
+                        "input_file": task["input_file"],
+                        "run_number": task["run_number"],
+                        "success": False,
+                        "output": {},
+                        "raw_output": "",
+                        "raw_error": str(exc),
+                        "tool_analytics": {},
+                        "error": str(exc),
+                        "duration": 0,
+                        "timestamp": datetime.now().isoformat(),
+                        "session_id": task["session_id"]
+                    })
+                    broadcast_log(session_id, f"❌ Test {completed}/{len(test_tasks)} failed with exception: {task['input_file']} run {task['run_number']}")
+        
+        broadcast_log(session_id, f"🏁 Repository {repo_path} completed: {len(results)} tests finished")
+        return results
+        
+    except Exception as e:
+        broadcast_log(session_id, f"💥 Fatal error in repository {repo_path}: {str(e)}")
+        # Return error results for all planned tests
+        input_files = get_input_files(inputs_path)
+        for input_file in input_files:
+            for run in range(1, config['run_count'] + 1):
+                results.append({
+                    "repo": repo_path,
+                    "input_file": input_file,
+                    "run_number": run,
+                    "success": False,
+                    "output": {},
+                    "raw_output": "",
+                    "raw_error": str(e),
+                    "tool_analytics": {},
+                    "error": str(e),
+                    "duration": 0,
+                    "timestamp": datetime.now().isoformat(),
+                    "session_id": session_id,
+                    "repo_level_error": True
+                })
+        return results
 
 @app.route('/')
 def serve_index():
@@ -780,7 +875,7 @@ def get_logs(session_id):
 
 @app.route('/api/run-test', methods=['POST'])
 def run_test():
-    """Run a single test"""
+    """Run a single test - uses optimized approach if creating index, or standalone mode"""
     if not config and not load_config():
         return jsonify({"error": "Configuration not loaded"}), 500
     
@@ -800,80 +895,102 @@ def run_test():
     # Get session_id from request data (frontend provides it now)
     session_id = data.get('session_id')
     
-    result = run_wingman_test(
-        data['repo_path'],
-        data['input_file'],
-        data['inputs_path'],
-        data['output_path'],
-        data['run_number'],
-        branch_name,
-        session_id
-    )
+    # Check if index_path is provided (optimized mode)
+    index_path = data.get('index_path')
+    
+    if index_path:
+        # Use existing index
+        result = run_wingman_test(
+            data['repo_path'],
+            data['input_file'],
+            data['inputs_path'],
+            data['output_path'],
+            data['run_number'],
+            index_path,
+            session_id
+        )
+    else:
+        # Single test mode - create index for this test only (legacy fallback)
+        repo_config = {
+            'repo_path': data['repo_path'],
+            'inputs_path': data['inputs_path'],
+            'output_path': data['output_path'],
+            'branch': branch_name
+        }
+        
+        # Create index for this single test
+        index_result = create_index_for_repo(data['repo_path'], branch_name, session_id)
+        
+        if not index_result["success"]:
+            return jsonify({
+                "success": False,
+                "output": {},
+                "raw_output": "",
+                "raw_error": index_result["error"],
+                "tool_analytics": {},
+                "error": f"Index creation failed: {index_result['error']}",
+                "duration": 0,
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "index_creation_failed": True,
+                **index_result
+            })
+        
+        # Run the test with the created index
+        result = run_wingman_test(
+            data['repo_path'],
+            data['input_file'],
+            data['inputs_path'],
+            data['output_path'],
+            data['run_number'],
+            index_result["index_path"],
+            session_id
+        )
     
     return jsonify(result)
 
-def run_test_parallel(args):
-    """Wrapper function for parallel execution"""
-    repo_path, input_file, inputs_path, output_path, run_number, branch_name = args
-    return run_wingman_test(repo_path, input_file, inputs_path, output_path, run_number, branch_name)
-
 @app.route('/api/run-all', methods=['POST'])
 def run_all_tests():
-    """Run all tests with parallel execution within each repository (sequentially by repo)"""
+    """Run all tests using optimized approach: create index once per repository"""
     if not config and not load_config():
         return jsonify({"error": "Configuration not loaded"}), 500
     
-    results = []
-    max_workers = config.get('parallel_workers', 3)
+    all_results = []
+    master_session_id = str(uuid.uuid4())  # Master session for overall progress
     
-    # Process each repository sequentially to avoid BWM_CODE_CONTEXT_INDEX conflicts
-    for repo in config['repos']:
-        inputs_path = repo['inputs_path']
-        input_files = get_input_files(inputs_path)
-        
-        # Prepare test tasks for this repository only
-        repo_test_tasks = []
-        branch_name = repo.get('branch')  # Get branch name for this repo
-        for input_file in input_files:
-            for run in range(1, config['run_count'] + 1):
-                repo_test_tasks.append((
-                    repo['repo_path'],
-                    input_file,
-                    inputs_path,
-                    repo['output_path'],
-                    run,
-                    branch_name
-                ))
-        
-        # Execute tests for this repository in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_task = {executor.submit(run_test_parallel, task): task for task in repo_test_tasks}
-            
-            for future in concurrent.futures.as_completed(future_to_task):
-                task = future_to_task[future]
-                repo_path, input_file, inputs_path, output_path, run_number = task
-                
-                try:
-                    result = future.result()
-                    results.append({
-                        "repo": repo_path,
-                        "input_file": input_file,
-                        "run_number": run_number,
-                        **result
-                    })
-                except Exception as exc:
-                    results.append({
-                        "repo": repo_path,
-                        "input_file": input_file,
-                        "run_number": run_number,
-                        "success": False,
-                        "output": {},
-                        "error": str(exc),
-                        "duration": 0,
-                        "timestamp": datetime.now().isoformat()
-                    })
+    broadcast_log(master_session_id, f"🎬 Starting optimized test suite execution")
+    broadcast_log(master_session_id, f"📊 Processing {len(config['repos'])} repositories")
     
-    return jsonify({"results": results})
+    # Process each repository sequentially (but tests within each repo run in parallel)
+    for repo_index, repo in enumerate(config['repos'], 1):
+        repo_session_id = f"{master_session_id}_repo_{repo_index}"
+        
+        broadcast_log(master_session_id, f"📦 [{repo_index}/{len(config['repos'])}] Starting repository: {repo['repo_path']}")
+        
+        # Run all tests for this repository with shared index
+        repo_results = run_tests_for_repo(repo, repo_session_id)
+        all_results.extend(repo_results)
+        
+        # Summary for this repository
+        success_count = sum(1 for r in repo_results if r.get('success', False))
+        total_count = len(repo_results)
+        broadcast_log(master_session_id, f"✅ [{repo_index}/{len(config['repos'])}] Repository completed: {success_count}/{total_count} tests passed")
+    
+    # Final summary
+    total_tests = len(all_results)
+    total_success = sum(1 for r in all_results if r.get('success', False))
+    broadcast_log(master_session_id, f"🏆 Test suite completed: {total_success}/{total_tests} tests passed")
+    
+    return jsonify({
+        "results": all_results,
+        "master_session_id": master_session_id,
+        "summary": {
+            "total_tests": total_tests,
+            "successful_tests": total_success,
+            "failed_tests": total_tests - total_success,
+            "success_rate": round((total_success / total_tests * 100) if total_tests > 0 else 0, 1)
+        }
+    })
 
 if __name__ == '__main__':
     if load_config():
